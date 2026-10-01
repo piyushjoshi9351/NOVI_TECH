@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, esc, getDnaContext, ringColor } from "../api";
 import { EmptyState, Kicker, showLoader, toast } from "../ui";
@@ -15,6 +15,11 @@ export default function CareersPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [aiAnswer, setAiAnswer] = useState("");
+
+  /* Only the busiest categories get a pill; the API returns them ordered by
+   * career count. Search still covers every category. */
+  const TOP_FILTERS = 8;
+  const topCategories = useMemo(() => (categories || []).slice(0, TOP_FILTERS), [categories]);
 
   useEffect(() => {
     let alive = true;
@@ -111,7 +116,7 @@ export default function CareersPage() {
         </div>
         <div className="cat-row">
           <button className={`cat-pill ${category === "" ? "on" : ""}`} onClick={() => setCategory("")}>All</button>
-          {(categories || []).map((c) => <button key={c} className={`cat-pill ${category === c ? "on" : ""}`} onClick={() => setCategory(c)}>{c}</button>)}
+          {topCategories.map((c) => <button key={c} className={`cat-pill ${category === c ? "on" : ""}`} onClick={() => setCategory(c)}>{c}</button>)}
         </div>
         <div id="match-result" className="mt">
           {aiAnswer ? <div className="card mb" style={{ whiteSpace: "pre-wrap" }} role="status">{aiAnswer}</div> : null}

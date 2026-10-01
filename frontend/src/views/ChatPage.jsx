@@ -68,6 +68,12 @@ export default function ChatPage() {
 
   const userName = user?.first_name || user?.name || "You";
   const firstName = String(user?.first_name || user?.name || "there").split(" ")[0];
+  /* Show the uploaded Passport photo in chat; fall back to initials. Only raster
+   * data URLs are ever stored server-side, so no URL sanitising is needed here. */
+  const userPhoto =
+    typeof user?.profile_photo === "string" && user.profile_photo.startsWith("data:image/")
+      ? user.profile_photo
+      : null;
 
   const refreshConvos = useCallback(async () => {
     try {
@@ -332,7 +338,15 @@ export default function ChatPage() {
                 return (
                   <div className={`chat-row ${mine ? "user" : "novi"}`} key={m.id ?? `m-${i}`}>
                     <div className="chat-avatar">
-                      {mine ? initials(userName) : <NoviRobot state={streaming ? "typing" : "idle"} />}
+                      {mine ? (
+                        userPhoto ? (
+                          <img className="chat-avatar-img" src={userPhoto} alt="" />
+                        ) : (
+                          initials(userName)
+                        )
+                      ) : (
+                        <NoviRobot state={streaming ? "typing" : "idle"} />
+                      )}
                     </div>
                     <div className="chat-stack">
                       <div className={`chat-bubble${m.isError ? " is-error" : ""}`}>
