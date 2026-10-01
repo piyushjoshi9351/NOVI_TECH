@@ -203,7 +203,8 @@ export default function DashboardPage() {
         </section>
 
         <section className="card dash-panel">
-          <ContributionHeatmap />
+          {/* Dashboard shows a 3-month glance; Checkin keeps the 6-month default. */}
+          <ContributionHeatmap weeks={13} />
         </section>
 
         <section className="card dash-panel">

@@ -4,6 +4,7 @@ import { api, initials, streamChat } from "../api";
 import { useAuth } from "../auth";
 import { EmptyState, showLoader, toast } from "../ui";
 import Markdown from "./chat/Markdown";
+import NoviRobot from "./chat/NoviRobot";
 
 function fmtAgo(iso) {
   if (!iso) return "";
@@ -305,8 +306,8 @@ export default function ChatPage() {
           <button type="button" className="chat-rail-btn" onClick={() => setRailOpen(true)} aria-label="Show conversations">
             <PanelLeft size={18} />
           </button>
-          <div className="chat-avatar" aria-hidden="true">
-            N
+          <div className="chat-avatar chat-avatar-bot">
+            <NoviRobot state={streaming ? "typing" : "idle"} />
           </div>
           <div className="chat-head-info">
             <div className="chat-head-name">Novi</div>
@@ -330,8 +331,8 @@ export default function ChatPage() {
                 const time = msgTime(m.created_at || m.createdAt || m.timestamp);
                 return (
                   <div className={`chat-row ${mine ? "user" : "novi"}`} key={m.id ?? `m-${i}`}>
-                    <div className="chat-avatar" aria-hidden="true">
-                      {mine ? initials(userName) : "N"}
+                    <div className="chat-avatar">
+                      {mine ? initials(userName) : <NoviRobot state={streaming ? "typing" : "idle"} />}
                     </div>
                     <div className="chat-stack">
                       <div className={`chat-bubble${m.isError ? " is-error" : ""}`}>
@@ -386,8 +387,8 @@ export default function ChatPage() {
 
           {streaming ? (
             <div className="chat-row novi">
-              <div className="chat-avatar" aria-hidden="true">
-                N
+              <div className="chat-avatar">
+                <NoviRobot state="typing" />
               </div>
               <div className="chat-stack">
                 <div className="chat-bubble">
