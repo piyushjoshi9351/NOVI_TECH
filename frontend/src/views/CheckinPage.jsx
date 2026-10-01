@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, getDnaContext, MOODS, moodIcon } from "../api";
 import { EmptyState, Kicker, Pill, showLoader, toast } from "../ui";
+import ContributionHeatmap from "./checkin/ContributionHeatmap";
 import PlannerPage from "./planner/PlannerPage";
 import "./checkin.css";
 
@@ -35,6 +36,8 @@ export default function CheckinPage() {
       if (c.mood) dr.mood = c.mood;
       setDraft(dr);
     });
+
+  
 
   useEffect(() => {
     let alive = true;
@@ -114,6 +117,8 @@ export default function CheckinPage() {
           {cur.status ? <Pill label={cur.status} tone="mid" /> : null}
         </div>
       </div>
+
+      <ContributionHeatmap />
 
       <div className="checkin-grid">
         {CK_FIELDS.map(([k, l, ph]) => (

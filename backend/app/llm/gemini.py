@@ -55,9 +55,13 @@ class GeminiProvider(LLMProvider):
             try:
                 await self._throttle()
                 contents = [system or "", prompt] if system else [prompt]
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents="\n\n".join(c for c in contents if c),
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.model,
+                        contents="\n\n".join(c for c in contents if c),
+                    ),
+                    timeout=settings.GEMINI_TIMEOUT_SECONDS,
                 )
                 self.last_call_time = time.time()
                 text = (response.text or "").strip()
@@ -96,12 +100,16 @@ class GeminiProvider(LLMProvider):
             try:
                 await self._throttle()
                 contents = [system or "", prompt] if system else [prompt]
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents="\n\n".join(c for c in contents if c),
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())]
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.model,
+                        contents="\n\n".join(c for c in contents if c),
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())]
+                        ),
                     ),
+                    timeout=settings.GEMINI_TIMEOUT_SECONDS,
                 )
                 self.last_call_time = time.time()
                 text = (response.text or "").strip()

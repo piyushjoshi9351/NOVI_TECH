@@ -1,33 +1,34 @@
 # Quick Setup Guide
 
-## 3 Steps to Run NOVI
+## Full Docker Run
 
-### Step 1: Get Free Gemini API Key
-1. Go to https://makersuite.google.com/app/apikey
-2. Sign in with Google
-3. Click "Create API Key"
-4. Copy the key (starts with `AIzaSy...`)
+1. Copy `backend/.env.example` to `backend/.env`.
+2. Fill `GEMINI_API_KEY`, `SECRET_KEY`, and Google OAuth values if sign-in is needed.
+3. Start Docker Desktop.
+4. Run:
 
-### Step 2: Update API Key
-Open `backend/.env` and replace:
-```
-GEMINI_API_KEY=your_gemini_api_key_here
-```
-with:
-```
-GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxx
-```
-
-### Step 3: Run the App
 ```bash
-# Make sure Docker Desktop is running, then:
-./start.sh
+docker compose up --build
 ```
 
-Open http://localhost:8000
+Open the Docker app at `http://localhost:3001`. The Docker backend is available at `http://localhost:8002`.
 
----
+The Docker stack includes frontend, backend, Redis, Letta, and Letta Postgres. It uses the MySQL and Ollama already running on your machine at `localhost:3306` and `localhost:11434`.
 
-## That's it! 🎉
+## Local Backend Run
 
-You can now chat with Novi, your AI student mentor.
+For native development, run:
+
+```bash
+./start.sh --frontend
+```
+
+This starts the infrastructure containers, uses `backend/venv`, initializes MySQL, starts FastAPI on `http://localhost:8000`, and optionally starts Next.js on `http://localhost:3000`.
+
+## Useful Checks
+
+```bash
+backend/venv/bin/python -m pytest backend/tests
+npm --prefix frontend run build
+docker compose config -q
+```

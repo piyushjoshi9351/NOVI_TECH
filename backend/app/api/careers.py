@@ -64,7 +64,10 @@ async def career_advice(
     career = career_service.get_career(db, slug=slug)
     if not career:
         raise HTTPException(status_code=404, detail="Career not found")
-    return await career_service.career_advice(db, user, career)
+    try:
+        return await career_service.career_advice(db, user, career)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/{slug}", response_model=CareerDetailOut)

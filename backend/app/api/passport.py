@@ -77,6 +77,9 @@ async def completion(user: User = Depends(get_current_student), db: Session = De
 
 @router.post("/refresh")
 async def refresh_from_chat(user: User = Depends(get_current_student), db: Session = Depends(get_db)):
-    result = await passport_service.refresh_from_chat(db, user)
+    try:
+        result = await passport_service.refresh_from_chat(db, user)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     _sync(user, db)
     return result

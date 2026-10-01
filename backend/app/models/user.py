@@ -1,6 +1,24 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
+from sqlalchemy.types import TypeDecorator
+
+
+class ImageData(TypeDecorator):
+    """MEDIUMTEXT on MySQL (TEXT caps at 64 KB, far too small for a photo).
+
+    Renders as TEXT elsewhere so the SQLite-backed test suite still works —
+    SQLite has no length limit that matters here.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "mysql":
+            return dialect.type_descriptor(MEDIUMTEXT())
+        return dialect.type_descriptor(Text())
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -23,6 +41,14 @@ class User(Base):
     grade: Mapped[int | None] = mapped_column(Integer, nullable=True)
     school: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # LinkedIn-style profile media + About copy. Stored as data URLs so the
+    # app needs no object storage or upload service.
+    profile_photo: Mapped[str | None] = mapped_column(ImageData, nullable=True)
+    banner_photo: Mapped[str | None] = mapped_column(ImageData, nullable=True)
+    about_me: Mapped[str | None] = mapped_column(Text, nullable=True)
+    headline: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    links: Mapped[list | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, server_default="1")
     letta_agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     onboarding_step: Mapped[str] = mapped_column(String(50), nullable=False, default="name", server_default="name")
@@ -32,6 +58,7 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    dna_snapshots = relationship("CareerDNASnapshot", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     career_dna = relationship("CareerDNA", back_populates="user", uselist=False, cascade="all, delete-orphan")
     onboarding = relationship(

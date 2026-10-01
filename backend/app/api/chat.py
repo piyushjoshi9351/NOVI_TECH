@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -16,22 +16,26 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("", response_model=ChatResponse)
 async def send_message(
     data: ChatRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
-    result = await chat_service.handle_message(user, data.message, data.conversation_id, db)
+    result = await chat_service.handle_message(user, data.message, data.conversation_id, db, refresh_memory=False)
+    background_tasks.add_task(chat_service.refresh_after_reply, user.id, result["conversation_id"], result["message"])
     return ChatResponse(**result)
 
 
 @router.post("/stream")
 async def send_message_stream(
     data: ChatRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
     async def _stream():
         try:
-            result = await chat_service.handle_message(user, data.message, data.conversation_id, db)
+            result = await chat_service.handle_message(user, data.message, data.conversation_id, db, refresh_memory=False)
+            background_tasks.add_task(chat_service.refresh_after_reply, user.id, result["conversation_id"], result["message"])
             yield f"data: {json.dumps({'type': 'meta', 'conversation_id': result['conversation_id'], 'message_id': result.get('message_id')})}\n\n"
             yield f"data: {json.dumps({'type': 'delta', 'text': result['message']})}\n\n"
         except Exception as exc:  # surface errors to the client instead of dropping the stream
@@ -39,6 +43,7 @@ async def send_message_stream(
 
     return StreamingResponse(
         _stream(),
+        background=background_tasks,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

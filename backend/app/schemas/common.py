@@ -18,6 +18,12 @@ class RoleBase(ORMModel):
     grade: int | None = None
     school: str | None = None
     avatar: str | None = None
+    profile_photo: str | None = None
+    banner_photo: str | None = None
+    about_me: str | None = None
+    headline: str | None = None
+    location: str | None = None
+    links: list | None = None
     letta_agent_id: str | None = None
     created_at: datetime | None = None
     onboarding_step: str | None = None

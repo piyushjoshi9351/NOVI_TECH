@@ -547,6 +547,7 @@ Return ONLY JSON:
       "category": "projects",
       "title": "Built a weather app",
       "description": "Short 1-2 sentence honest summary of what the student did.",
+      "evidence": "Exact short quote from the student's own message that proves completion.",
       "skills": ["python", "apis"],
       "date_achieved": "2025-03"
     }}
@@ -559,6 +560,7 @@ student mentioned roughly when it happened.
 Rules:
 - at most 6 items; only include items NOT already present among the Existing passport entries.
 - title should be concise and specific.
+- Every item must include an evidence quote copied exactly from a student message.
 - Output ONLY valid JSON.
 """
 
@@ -567,7 +569,7 @@ def passport_extract_prompt(chat_history: list[dict], existing_items: list[str])
     existing = "; ".join(existing_items[:15]) or "none"
     return (
         f"Existing passport entries (do not duplicate): {existing}\n"
-        f"Chat history:\n{json.dumps(chat_history[-30:], default=str)}\n\n"
+        f"Chat history:\n{json.dumps(chat_history, default=str)}\n\n"
         f"Extract new passport items JSON."
     )
 

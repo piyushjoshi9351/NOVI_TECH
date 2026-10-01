@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "next/link";
-import { esc, ringColor } from "./api";
+import { ringColor } from "./api";
 
 /* ------------------------------------------------------------------ loader */
 let _loaderTimer = null;
@@ -37,9 +37,11 @@ export function toast(msg, tone = "ok") {
 export function ToastHost() {
   const [items, setItems] = useState([]);
   useEffect(() => {
-    _emitToast = (msg, tone) => {
-      const id = ++_toastSeq;
-      setItems((arr) => [...arr, { id, msg: esc(msg), tone }]);
+_emitToast = (msg, tone) => {
+        const id = ++_toastSeq;
+        // Plain text, rendered as a text child. esc() no longer produces HTML
+        // entities, so this must not go through dangerouslySetInnerHTML.
+        setItems((arr) => [...arr, { id, msg: String(msg ?? ""), tone }]);
       setTimeout(() => setItems((arr) => arr.map((i) => (i.id === id ? { ...i, out: true } : i))), 2800);
       setTimeout(() => setItems((arr) => arr.filter((i) => i.id !== id)), 3100);
     };
@@ -52,7 +54,7 @@ export function ToastHost() {
       {items.map((i) => (
         <div key={i.id} className={`toast ${i.tone}${i.out ? " out" : ""}`}>
           <span className="t-ico">{icons[i.tone] || icons.ok}</span>
-          <span dangerouslySetInnerHTML={{ __html: i.msg }} />
+          <span>{i.msg}</span>
         </div>
       ))}
     </div>

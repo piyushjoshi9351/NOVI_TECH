@@ -54,3 +54,4 @@ __all__ = [
     "WeeklyCheckin",
     "WeeklyPriority",
 ]
+from app.models.career_dna_snapshot import CareerDNASnapshot

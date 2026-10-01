@@ -5,9 +5,11 @@
     # no longer serves the /v1 REST API this app integration relies on.
     image: letta/letta:0.16.8
     restart: unless-stopped
+    env_file:
+      - ./backend/.env
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - LETTA_PG_URI=postgresql://novi:novi@postgres:5432/letta
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,24 +38,6 @@
     networks:
       - novi-net
 
-  mysql:
-    image: mysql:8.0
-    command: ["--default-authentication-plugin=mysql_native_password"]
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-@Rajendra5109}
-      MYSQL_DATABASE: ${MYSQL_DB:-novi_db}
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-@Rajendra5109}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    networks:
-      - novi-net
-
   backend:
     build:
       context: ./backend
@@ -66,21 +50,15 @@
     env_file:
       - ./backend/.env
     environment:
-      - DB_HOST=mysql
+      - DB_HOST=host.docker.internal
       - DB_PORT=3306
-      - DB_USER=root
-      - DB_PASSWORD=${MYSQL_ROOT_PASSWORD:-@Rajendra5109}
-      - DB_NAME=${MYSQL_DB:-novi_db}
-      - SECRET_KEY=${SECRET_KEY:-novi-secret-key-change-in-production}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - LETTA_BASE_URL=http://letta:8283
       - INTERNAL_CALLBACK_BASE_URL=http://backend:8000
-      - INTERNAL_SHARED_SECRET=${INTERNAL_SHARED_SECRET}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+      - FRONTEND_URL=http://localhost:3000
     networks:
       - novi-net
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_started
       letta:
@@ -88,9 +66,21 @@
     ports:
       - "8000:8000"
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - BACKEND_INTERNAL_URL=http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    networks:
+      - novi-net
+
 volumes:
   letta_pg_016_data:
-  mysql_data:
 
 networks:
   novi-net:

@@ -70,7 +70,7 @@ export default function ChatPage() {
 
   const refreshConvos = useCallback(async () => {
     try {
-      setConvos(await api("/chat/conversations"));
+      setConvos(await api("/chat/conversations", { fresh: true }));
     } catch (_) {
       /* best-effort refresh */
     }

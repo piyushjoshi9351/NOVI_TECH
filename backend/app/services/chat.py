@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from sqlalchemy import select
@@ -15,7 +16,12 @@ from app.services.providers import gemini, memory
 def _lazy_ensure_agent(user: User, db: Session) -> str | None:
     """Provision a Letta agent for a student on first use if it hasn't been created."""
     if user.letta_agent_id:
-        return user.letta_agent_id
+        try:
+            if memory.letta.agent_exists(user.letta_agent_id):
+                return user.letta_agent_id
+        except Exception:
+            return user.letta_agent_id
+        # Recreate only when Letta explicitly confirms the saved agent is gone.
     if user.role != UserRole.STUDENT or not memory.is_reachable():
         return None
     agent_id = memory.ensure_agent(
@@ -44,7 +50,7 @@ def _student_profile_parts(user: User, db: Session) -> dict:
     }
 
 
-async def handle_message(user: User, message: str, conversation_id: int | None, db: Session) -> dict:
+async def handle_message(user: User, message: str, conversation_id: int | None, db: Session, refresh_memory: bool = True) -> dict:
     """Send a message and produce the reply through the memory-aware pipeline."""
     conversation = get_or_create_conversation(user, conversation_id, message, db)
 
@@ -61,7 +67,8 @@ async def handle_message(user: User, message: str, conversation_id: int | None, 
     conversation.title = conversation.title or _make_title(message)
     db.commit()
 
-    await _refresh_memory_and_dna(user, conversation.id, response, db)
+    if refresh_memory:
+        await _refresh_memory_and_dna(user, conversation.id, response, db)
 
     return {
         "message": response,
@@ -118,11 +125,14 @@ async def _generate_reply(user: User, message: str, conversation_id: int, db: Se
     agent_id = _lazy_ensure_agent(user, db)
     # Pages -> chat: mirror the freshest DB state into Letta's memory so the
     # next reply is grounded in the student's actual roadmap/passport/tasks.
-    state_sync.push(user, db)
+    await _push_state_to_memory(user, db)
 
     if agent_id and memory.is_reachable():
         try:
-            reply = memory.chat(agent_id, message)
+            reply = await asyncio.wait_for(
+                asyncio.to_thread(memory.chat, agent_id, message, user),
+                timeout=90.0,
+            )
             if reply:
                 return reply, "letta"
         except Exception as exc:
@@ -142,6 +152,15 @@ async def _generate_reply(user: User, message: str, conversation_id: int, db: Se
 
 async def _gemini_memory_context(user: User, db: Session) -> str:
     parts = []
+    recent = list(db.scalars(
+        select(Message).join(Conversation)
+        .where(Conversation.user_id == user.id)
+        .order_by(Message.created_at.desc(), Message.id.desc()).limit(12)
+    ))
+    if recent:
+        parts.append("Recent conversation:\n" + "\n".join(
+            f"{m.role.value}: {m.content[:800]}" for m in reversed(recent)
+        ))
 
     # Synced app state (goals, roadmap %, priorities, tasks, passport)
     try:
@@ -153,9 +172,13 @@ async def _gemini_memory_context(user: User, db: Session) -> str:
 
     if user.letta_agent_id and memory.is_reachable():
         try:
-            profile = memory.current_profile(user.letta_agent_id)
+            profile = await asyncio.to_thread(memory.current_profile, user.letta_agent_id)
             if profile:
                 parts.append(profile)
+            latest_message = recent[0].content if recent else ""
+            recalled = await asyncio.to_thread(memory.recall_context, user.letta_agent_id, latest_message)
+            if recalled:
+                parts.append(recalled[:6000])
         except Exception:
             pass
     dna = get_dna(user, db)
@@ -177,7 +200,7 @@ async def _refresh_memory_and_dna(user: User, conversation_id: int, reply: str, 
 
     if agent_id and memory.is_reachable():
         try:
-            memory.seed_profile(agent_id, **_student_profile_parts(user, db))
+            await asyncio.to_thread(memory.seed_profile, agent_id, **_student_profile_parts(user, db))
         except Exception as exc:
             print(f"[chat] memory seed skipped: {exc}")
         try:
@@ -200,7 +223,7 @@ async def _refresh_memory_and_dna(user: User, conversation_id: int, reply: str, 
 
     # Chat -> pages: re-mirror the DB (DNA may have changed above) into Letta memory.
     try:
-        state_sync.push(user, db)
+        await _push_state_to_memory(user, db)
     except Exception as exc:
         print(f"[chat] state re-sync skipped: {exc}")
 
@@ -214,6 +237,16 @@ async def _auto_refresh_dna(user: User, conversation_id: int, db: Session) -> No
     await refresh_dna_from_history(user, chat_history, db, conversation_id=conversation_id)
 
 
+async def _push_state_to_memory(user: User, db: Session) -> bool:
+    agent = getattr(user, "letta_agent_id", None)
+    if not agent or not memory.is_reachable():
+        return False
+    text = state_sync.build_snapshot(user, db)
+    if not text:
+        return False
+    return await asyncio.to_thread(memory.set_state, agent, text, getattr(user, "grade", None))
+
+
 def _user_context(user: User) -> dict:
     return {
         "name": user.display_name,
@@ -225,3 +258,17 @@ def _user_context(user: User) -> dict:
 
 def _make_title(message: str) -> str:
     return message.strip()[:60] or f"Chat {uuid.uuid4().hex[:6]}"
+
+
+async def refresh_after_reply(user_id: int, conversation_id: int, reply: str) -> None:
+    """Use a separate session after the response has been delivered."""
+    from app.core.database import SessionLocal
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if user is None:
+            return
+        try:
+            await _refresh_memory_and_dna(user, conversation_id, reply, db)
+        except Exception as exc:
+            db.rollback()
+            print(f"[chat] background memory update failed: {exc}")

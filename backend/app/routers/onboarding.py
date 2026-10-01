@@ -49,7 +49,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_student
-from app.letta_client import create_student_agent, send_onboarding_message
+from app.letta_client import send_onboarding_message
 from app.models.catalog import Country, Curriculum, Grade, Subject
 from app.models.onboarding_data import OnboardingAnswer, StudentProfile
 from app.models.user import User
@@ -58,6 +58,17 @@ from app.services import voice, voice_resolve
 from app.services.student_context import career_in_mind_phrase, load_student_context
 
 logger = logging.getLogger("novi.onboarding")
+
+
+def _ensure_student_memory(user: User, db: Session) -> str | None:
+    """Use the same agent for onboarding, chat, core and archival memory."""
+    from app.services.chat import _lazy_ensure_agent
+
+    try:
+        return _lazy_ensure_agent(user, db)
+    except Exception as exc:
+        logger.warning("could not provision Letta agent for student %s: %s", user.id, exc)
+        return None
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -358,14 +369,7 @@ def onboarding_state(
     # Create Letta agent if needed (first time hitting state or answer).
     # If LettA is unavailable the flow still works — the AI steps degrade to the
     # deterministic fallback and LettA is retried on the next request.
-    if user.letta_agent_id is None:
-        try:
-            user.letta_agent_id = create_student_agent(str(user.id))
-            db.commit()
-            logger.info("created LettA agent %s for student %s", user.letta_agent_id, user.id)
-        except Exception as exc:
-            db.rollback()
-            logger.warning("could not create LettA agent for student %s: %s", user.id, exc)
+    _ensure_student_memory(user, db)
 
     step = _current_step(user)
     if step is None:
@@ -444,14 +448,7 @@ async def submit_answer(
     db: Session = Depends(get_db),
 ):
     # Ensure Letta agent exists
-    if user.letta_agent_id is None:
-        try:
-            user.letta_agent_id = create_student_agent(str(user.id))
-            db.commit()
-            logger.info("created LettA agent %s for student %s", user.letta_agent_id, user.id)
-        except Exception as exc:
-            db.rollback()
-            logger.warning("could not create LettA agent for student %s: %s", user.id, exc)
+    _ensure_student_memory(user, db)
 
     step = _step_by_id(data.step_id)
     current = _current_step(user)

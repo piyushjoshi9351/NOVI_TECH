@@ -154,56 +154,80 @@ async def refresh_from_chat(db: Session, user: User) -> dict:
     Returns {"added": int, "skipped": int, "total": int} so the UI can report
     what Novi found. Skips entries that already exist (title-based dedupe).
     """
-    history = _chat_history(db, user)
-    user_msgs = [m for m in history if m["role"] == MessageRole.USER.value]
-    if len(user_msgs) < 3:
+    history = [m for m in _chat_history(db, user) if m["role"] == MessageRole.USER.value]
+    user_msgs = history
+    if not user_msgs:
         return {"added": 0, "skipped": 0, "total": len(user_msgs)}
 
     existing = [i.title for i in list_items(db, user)]
-    try:
-        result = await gemini.complete_json(
-            prompts.passport_extract_prompt(history, existing),
-            system=prompts.PASSPORT_EXTRACT_SYSTEM,
-        )
-    except Exception as exc:
-        print(f"[passport] chat extraction skipped: {exc}")
-        return {"added": 0, "skipped": 0, "total": len(user_msgs)}
-
-    if not isinstance(result, dict):
-        return {"added": 0, "skipped": 0, "total": len(user_msgs)}
-
     added = 0
+    skipped = 0
     existing_titles = set(t.strip().lower() for t in existing)
-    for raw in result.get("items") or []:
-        if not isinstance(raw, dict):
+    # Process every conversation, in bounded chunks, so an old achievement is
+    # still discovered on refresh after the student has chatted many times.
+    for start in range(0, len(history), 30):
+        chunk = history[start:start + 30]
+        if not any(m["role"] == MessageRole.USER.value for m in chunk):
             continue
-        category = str(raw.get("category", "")).strip()
-        if category not in CORE_CATEGORIES + ("achievements",):
-            continue
-        title = str(raw.get("title", "")).strip()
-        if not title or title.lower() in existing_titles:
-            continue
-        date_str = str(raw.get("date_achieved") or "").strip()
-        date_achieved = None
-        if date_str[:7].count("-") == 1:
-            try:
-                date_achieved = datetime.strptime(date_str[:7], "%Y-%m").date()
-            except ValueError:
-                date_achieved = None
-        data = PassportItemCreate(
-            category=category,
-            title=title,
-            description=str(raw.get("description") or "").strip(),
-            skills=[str(s).strip() for s in (raw.get("skills") or []) if str(s).strip()],
-            date_achieved=date_achieved,
-        )
-        created = create_item(db, user, data)
-        if created and created.title.strip().lower() not in existing_titles:
-            added += 1
-            existing_titles.add(created.title.strip().lower())
+        try:
+            result = await gemini.complete_json(
+                prompts.passport_extract_prompt(chunk, list(existing_titles)),
+                system=prompts.PASSPORT_EXTRACT_SYSTEM,
+            )
+        except Exception as exc:
+            print(f"[passport] chat extraction failed: {exc}")
+            raise RuntimeError("Passport refresh could not reach the AI provider") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("Passport refresh returned an invalid AI response")
+        for raw in result.get("items") or []:
+            if _add_extracted_item(db, user, raw, chunk, existing_titles):
+                added += 1
+            else:
+                skipped += 1
     if added:
         dedupe_items(db, user)
-    return {"added": added, "skipped": 0, "total": len(user_msgs)}
+    return {"added": added, "skipped": skipped, "total": len(user_msgs)}
+
+
+def _add_extracted_item(db: Session, user: User, raw: dict, chunk: list[dict], existing_titles: set[str]) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    category = str(raw.get("category", "")).strip()
+    if category not in CORE_CATEGORIES + ("achievements",):
+        return False
+    title = str(raw.get("title", "")).strip()
+    if not title or title.lower() in existing_titles:
+        return False
+    evidence = str(raw.get("evidence") or "").strip()
+    if len(evidence) < 8 or not any(
+        evidence.casefold() in m["content"].casefold()
+        for m in chunk if m["role"] == MessageRole.USER.value
+    ):
+        return False
+    title_words = {word for word in title.casefold().split() if len(word) > 3}
+    if title_words and not any(word in evidence.casefold() for word in title_words):
+        return False
+    date_str = str(raw.get("date_achieved") or "").strip()
+    date_achieved = None
+    if date_str[:7].count("-") == 1 and date_str[:7] in evidence:
+        try:
+            date_achieved = datetime.strptime(date_str[:7], "%Y-%m").date()
+        except ValueError:
+            date_achieved = None
+    data = PassportItemCreate(
+        category=category,
+        title=title,
+        description=evidence,
+        skills=[
+            str(s).strip()
+            for s in (raw.get("skills") or [])
+            if str(s).strip() and str(s).casefold() in evidence.casefold()
+        ],
+        date_achieved=date_achieved,
+    )
+    created = create_item(db, user, data)
+    existing_titles.add(created.title.strip().lower())
+    return True
 
 
 def completion(db: Session, user: User) -> dict:

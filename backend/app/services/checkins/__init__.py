@@ -1,10 +1,18 @@
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.chat import Conversation, Message
 from app.models.checkin import WeeklyCheckin
-from app.models.enums import CheckinStatus, DailyCheckinStatus, GoalStatus, PrioritySkill, TaskStatus
+from app.models.enums import (
+    CheckinStatus,
+    DailyCheckinStatus,
+    GoalStatus,
+    MessageRole,
+    PrioritySkill,
+    TaskStatus,
+)
 from app.models.planner import DailyCheckin, ScheduleBlock
 from app.models.roadmap import Goal, RoadmapItem, Task, WeeklyPriority
 from app.models.user import User
@@ -136,12 +144,42 @@ def list_checkins(db: Session, user: User, limit: int = 12) -> list[WeeklyChecki
     return list(db.scalars(stmt))
 
 
-def contribution_graph(db: Session, user: User, weeks: int = 53) -> dict:
-    """GitHub-style contribution grid for daily + weekly check-ins.
+def _day_activity_points(
+    daily: DailyCheckin | None, msgs: int, blocks: int
+) -> tuple[int, list[str]]:
+    """Points for one day, plus the list of activity kinds that produced them.
 
-    Each cell is a calendar day; intensity (0-4) reflects how engaged the
-    student's check-ins were that day. Daily check-ins score by fields filled;
-    completing a weekly check-in lights up the whole week it belongs to.
+    Three things count: a completed daily check-in (scored by fields filled),
+    messages sent to Novi, and completed planner blocks. More activity on a day
+    scores higher, so the shade darkens with how busy the day actually was.
+    """
+    points = 0
+    kinds: list[str] = []
+    if daily:
+        filled = _daily_active(daily)
+        if filled:
+            points += filled
+            kinds.append("check-in")
+    if msgs:
+        points += min(msgs, 4)
+        kinds.append("chat")
+    if blocks:
+        points += min(blocks, 4)
+        kinds.append("blocks")
+    return points, kinds
+
+
+def contribution_graph(db: Session, user: User, weeks: int = 53) -> dict:
+    """GitHub-style contribution grid.
+
+    A day turns green when the student did something on that exact calendar day:
+    completed a daily check-in, sent messages to Novi, or finished planner
+    blocks. The shade (0-4) darkens with how much they did, so a chatty or
+    busy day reads heavier than a quiet one.
+
+    A weekly reflection deliberately does NOT light up days: it covers a whole
+    week, so treating it as seven green days made the grid lie. Weeks carry a
+    separate ``weekly_done`` flag that the UI renders as its own track.
     """
     today = date.today()
     monday = _week_start(today)
@@ -165,21 +203,18 @@ def contribution_graph(db: Session, user: User, weeks: int = 53) -> dict:
     daily_by_day: dict[date, DailyCheckin] = {c.date: c for c in dailies}
     weekly_by_start: dict[date, WeeklyCheckin] = {c.week_start: c for c in weeklies}
 
+    msgs_by_day: dict[date, int] = _messages_per_day(db, user, start, today)
+    blocks_by_day: dict[date, int] = _completed_blocks_per_day(db, user, start, today)
+
     def _day_score(d: date) -> tuple[int, int, str, str]:
-        points = 0
-        kinds: list[str] = []
+        """Points, kinds and level for one calendar day from all sources."""
         daily = daily_by_day.get(d)
-        if daily and _daily_active(daily):
-            kinds.append("daily")
-            points += _daily_active(daily)
-        weekly = weekly_by_start.get(_week_start(d))
-        if weekly and weekly.status != CheckinStatus.DRAFT:
-            kinds.append("weekly")
-            points += 2
+        msgs = msgs_by_day.get(d, 0)
+        blocks = blocks_by_day.get(d, 0)
+        points, kinds = _day_activity_points(daily, msgs, blocks)
         level = _score_to_level(points)
-        kind = "both" if len(kinds) == 2 else (kinds[0] if kinds else "")
-        note = _day_note(d, daily, points, kind)
-        return level, points, kind, note
+        kind = "+".join(kinds)
+        return level, points, kind, _day_note(d, daily, msgs, blocks, points, kinds)
 
     grid = []
     for w in range(weeks):
@@ -197,7 +232,14 @@ def contribution_graph(db: Session, user: User, weeks: int = 53) -> dict:
                     "note": note,
                 }
             )
-        grid.append({"week_start": _iso(ws), "days": days})
+        weekly = weekly_by_start.get(ws)
+        grid.append(
+            {
+                "week_start": _iso(ws),
+                "days": days,
+                "weekly_done": bool(weekly and weekly.status != CheckinStatus.DRAFT),
+            }
+        )
 
     active_days = 0
     best = 0
@@ -262,18 +304,74 @@ def _score_to_level(points: int) -> int:
     return 4
 
 
-def _day_note(d: date, daily: DailyCheckin | None, points: int, kind: str) -> str:
-    if points == 0:
-        return f"{d.strftime('%d %b')} · no check-in"
-    bits = []
-    if daily and _daily_active(daily):
-        bits.append("daily check-in")
-        if daily.focus:
-            bits.append(f"focus: {daily.focus[:48]}")
-    if "weekly" in kind:
-        bits.append("weekly reflection submitted")
+def _messages_per_day(db: Session, user: User, start: date, end: date) -> dict[date, int]:
+    """Count of student-sent chat messages per calendar day."""
+    rows = db.execute(
+        select(func.date(Message.created_at), func.count(Message.id))
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(
+            Conversation.user_id == user.id,
+            Message.role == MessageRole.USER,
+            func.date(Message.created_at) >= start,
+            func.date(Message.created_at) <= end,
+        )
+        .group_by(func.date(Message.created_at))
+    )
+    out: dict[date, int] = {}
+    for raw, count in rows:
+        d = _as_date(raw)
+        if d:
+            out[d] = int(count)
+    return out
+
+
+def _completed_blocks_per_day(db: Session, user: User, start: date, end: date) -> dict[date, int]:
+    """Count of planner blocks the student marked done, per calendar day."""
+    rows = db.execute(
+        select(ScheduleBlock.date, func.count(ScheduleBlock.id)).where(
+            ScheduleBlock.user_id == user.id,
+            ScheduleBlock.completed.is_(True),
+            ScheduleBlock.date >= start,
+            ScheduleBlock.date <= end,
+        )
+        .group_by(ScheduleBlock.date)
+    )
+    return {d: int(c) for d, c in rows}
+
+
+def _as_date(raw) -> date | None:
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+
+
+def _day_note(
+    d: date,
+    daily: DailyCheckin | None,
+    msgs: int,
+    blocks: int,
+    points: int,
+    kinds: list[str],
+) -> str:
     label = d.strftime("%d %b %Y")
-    return f"{label} · {' · '.join(bits)}" if bits else f"{label} · {points}pt"
+    if not kinds:
+        return f"{label} · no activity"
+    bits: list[str] = []
+    if "check-in" in kinds and daily:
+        if daily.focus:
+            bits.append(f"check-in: {daily.focus[:40]}")
+        else:
+            bits.append("daily check-in")
+    if msgs:
+        bits.append(f"{msgs} message{'s' if msgs != 1 else ''} to Novi")
+    if blocks:
+        bits.append(f"{blocks} block{'s' if blocks != 1 else ''} done")
+    return f"{label} · {' · '.join(bits)}"
 
 
 def _week_start(d: date | None = None) -> date:

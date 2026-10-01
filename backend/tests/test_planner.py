@@ -124,7 +124,8 @@ def test_daily_checkins_roll_up_into_weekly_summary(db, user):
     assert fallback["milestones"][0] == "Shipped the planner"
 
 
-def test_contribution_graph_scores_daily_and_weekly(db, user):
+def test_contribution_graph_counts_daily_only(db, user):
+    """Daily check-ins green the grid; a weekly reflection must not fake 7 days."""
     today = date.today()
     planner.save_daily_checkin(
         db, user, DailyCheckinSave(date=today, focus="Algebra", done="5 problems", mood="good", energy=8)
@@ -135,16 +136,23 @@ def test_contribution_graph_scores_daily_and_weekly(db, user):
     assert len(graph["weeks"]) == 4
     flat = [day for week in graph["weeks"] for day in week["days"]]
     today_cell = next(d for d in flat if d["date"] == today.isoformat())
-    assert today_cell["kind"] == "both"       # daily check-in + this week's weekly reflection
-    assert today_cell["count"] == 7           # 5 (daily fields) + 2 (weekly)
-    assert today_cell["level"] == 4
+    assert today_cell["kind"] == "check-in"
+    assert today_cell["count"] == 5           # filled daily fields only
+    assert today_cell["level"] == 3
 
+    # the weekly reflection is a separate track, not seven green days
     monday = planner._week_start(today)
-    prev_monday = monday - timedelta(days=7)
-    weekly_cells = [d for d in flat if d["date"] == prev_monday.isoformat()]
-    assert len(weekly_cells) == 1
-    assert weekly_cells[0]["kind"] == ""      # an untouched week stays empty
-    assert weekly_cells[0]["level"] == 0
+    this_week = next(w for w in graph["weeks"] if w["week_start"] == monday.isoformat())
+    assert this_week["weekly_done"] is True
+    for offset in range(7):
+        if offset == today.weekday():
+            continue  # today legitimately has its own daily check-in
+        later = next(d for d in this_week["days"] if d["date"] == (monday + timedelta(days=offset)).isoformat())
+        assert later["level"] == 0, "a weekly reflection must not green days without a daily check-in"
+        assert later["kind"] == ""
 
-    assert graph["stats"]["active_days"] >= 1
+    prev_week = next(w for w in graph["weeks"] if w["week_start"] == (monday - timedelta(days=7)).isoformat())
+    assert prev_week["weekly_done"] is False
+
+    assert graph["stats"]["active_days"] == 1
     assert graph["stats"]["weekly_done"] == 1
