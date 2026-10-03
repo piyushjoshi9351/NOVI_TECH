@@ -87,20 +87,33 @@ def test_unauthenticated_is_401(client, user, active_link):
 
 
 # ------------------------------------------------------------------ scopes
-def test_basic_scope_cannot_read_insights(client, parent, user, active_link):
+def test_basic_scope_gets_an_empty_insights_section(client, parent, user, active_link):
+    """Unshared is NOT an error: 200 with an empty section.
+
+    A 403 here would make the whole dashboard look broken to a parent who simply
+    has basic consent, which is the common case.
+    """
     r = client.get(
         f"/api/v1/parent/students/{user.id}/insights",
         headers=auth_header(parent.id, "parent"),
     )
-    assert r.status_code == 403
+    assert r.status_code == 200
+    body = r.json()
+    assert body["scopes"] == ["basic"]
+    assert body["top_interests"] == []
+    assert body["focus_areas"] == []
+    assert body["novi_insight"] is None
 
 
-def test_basic_scope_cannot_read_memory(client, parent, user, active_link):
+def test_basic_scope_gets_a_null_growth_section(client, parent, user, active_link):
     r = client.get(
         f"/api/v1/parent/students/{user.id}/memory",
         headers=auth_header(parent.id, "parent"),
     )
-    assert r.status_code == 403
+    assert r.status_code == 200
+    body = r.json()
+    assert body["scopes"] == ["basic"]
+    assert body["growth"] is None
 
 
 def test_overview_is_allowed_with_basic_scope(client, parent, user, active_link):
@@ -114,17 +127,27 @@ def test_overview_is_allowed_with_basic_scope(client, parent, user, active_link)
 def test_granting_insights_unlocks_only_insights(client, db, parent, user, active_link):
     parent_links.set_scopes(db, active_link, {"insights": True, "memory": False})
     h = auth_header(parent.id, "parent")
-    assert client.get(f"/api/v1/parent/students/{user.id}/insights", headers=h).status_code == 200
-    assert client.get(f"/api/v1/parent/students/{user.id}/memory", headers=h).status_code == 403
+
+    insights = client.get(f"/api/v1/parent/students/{user.id}/insights", headers=h)
+    assert insights.status_code == 200
+    assert "insights" in insights.json()["scopes"]
+
+    growth = client.get(f"/api/v1/parent/students/{user.id}/memory", headers=h)
+    assert growth.status_code == 200
+    assert growth.json()["growth"] is None
 
 
 def test_revoking_scopes_takes_effect_immediately(client, db, parent, user, active_link):
     parent_links.set_scopes(db, active_link, {"insights": True, "memory": False})
     h = auth_header(parent.id, "parent")
-    assert client.get(f"/api/v1/parent/students/{user.id}/insights", headers=h).status_code == 200
+    assert "insights" in client.get(
+        f"/api/v1/parent/students/{user.id}/insights", headers=h
+    ).json()["scopes"]
 
     parent_links.set_scopes(db, active_link, {"insights": False, "memory": False})
-    assert client.get(f"/api/v1/parent/students/{user.id}/insights", headers=h).status_code == 403
+    body = client.get(f"/api/v1/parent/students/{user.id}/insights", headers=h).json()
+    assert body["scopes"] == ["basic"]
+    assert body["top_interests"] == []
 
 
 def test_scope_check_runs_before_the_handler(client, parent, other_student):

@@ -1,152 +1,68 @@
-"""Read-only, parent-safe access to a student's Letta memory.
+"""Parent-safe "Growth history" -- what replaced the raw "Long-term memory" view.
 
-Design constraints:
+Why this module exists
+----------------------
+The previous implementation of the ``memory`` consent section returned, verbatim
+to the parent:
 
-* READ-ONLY. Only ``LettaClient.get_memory`` and ``get_archival`` are reachable
-  from here -- no send_message, no insert_archival, no update_memory_block. A
-  parent must never be able to write into, or be written into, the student's
-  memory.
-* The agent id comes from ``student.letta_agent_id`` (DB), never from the request
-  body, so a parent cannot aim a read at someone else's agent.
-* Only the ``human`` core block is returned: the student's own profile line.
-  ``persona`` and any other block are filtered out.
-* Archival passages are tag-filtered. Letta tags carry the raw conversation
-  imports (``chat``, ``student``, ``novistate``), which must never reach a parent.
-* Fails soft: any Letta error yields an empty memory view rather than a 500, so
-  a memory outage cannot take down a parent's dashboard.
+* every tag-matching **Letta archival passage** -- free text that the memory
+  service generates from the student's conversations, and
+* the **Letta core-memory ``human`` block** -- the live profile line Novi keeps
+  rewriting from chat.
+
+Both are the student's private conversation with their mentor. Tag filtering
+cannot make free text safe: an LLM-written "achievement" passage is a paraphrase
+of something the student said, so it carries the same content as the chat.
+
+What it does now
+----------------
+The section is a projection of two tables the student owns and that contain no
+conversation content:
+
+* ``growth_milestones`` -- titles of milestones the student COMPLETED
+* ``growth_snapshots``  -- a daily mean-confidence trend over ~90 days
+
+There is **no Letta client, no HTTP call and no import of the memory stack** in
+this module. That is deliberate and load-bearing: if Letta is unreachable the
+response is unaffected, and there is no code path by which an archival passage
+could reach a parent payload.
+
+The internal consent key stays ``memory`` so every already-stored consent keeps
+working with no migration and no change to the student's choices -- only the
+display label and description changed, in both the consent UI and the parent
+view.
+
+READ-ONLY. Nothing here writes to the student's data.
 """
 
-import logging
-from datetime import datetime
-
-from app.core.config import settings
-from app.llm.letta import LettaClient
 from app.models.user import User
-from app.schemas.parent import MemoryPassage, MemoryResponse
-from app.services.parent_data import student_ref
-
-logger = logging.getLogger("novi.parent_memory")
-
-MAX_PASSAGES = 50
-
-# Only these tags are considered shareable. Everything else is dropped.
-ALLOWED_TAGS = frozenset(
-    {
-        "milestone",
-        "profile",
-        "strength",
-        "interest",
-        "skill",
-        "goal",
-        "achievement",
-        "snapshot",
-        "preference",
-        "sy",
-    }
-)
-
-# Never shareable, regardless of what Letta returns. Raw chat imports and Novi's
-# internal state are the student's private conversation with their mentor.
-BLOCKED_TAGS = frozenset({"chat", "student", "novistate", "conversation"})
-
-
-def _parse_dt(value: object) -> datetime | None:
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str) and value:
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    return None
-
-
-def _passage_tags(raw: object) -> list[str]:
-    if isinstance(raw, list):
-        return [str(t).strip().lower() for t in raw if str(t).strip()]
-    if isinstance(raw, str) and raw.strip():
-        return [t.strip().lower() for t in raw.split(",") if t.strip()]
-    return []
-
-
-def _is_shareable(tags: list[str]) -> bool:
-    if any(tag in BLOCKED_TAGS for tag in tags):
-        return False
-    return any(tag in ALLOWED_TAGS or tag.startswith("sy") for tag in tags)
+from app.schemas.parent import GrowthHistory, MemoryResponse, ParentStudentRef
+from app.services.parent_projection import build_growth
 
 
 def build_memory(
     student: User,
     link,
-    client: LettaClient | None = None,
+    *,
+    db=None,
 ) -> MemoryResponse:
-    """Curated, read-only memory view for a parent.
+    """Growth history for a parent, or ``growth=None`` when not shared.
 
-    Always returns a MemoryResponse; degrades to empty with ``available=False``
-    when the student has no agent or Letta is unreachable.
+    Kept under the old name/signature so the stored ``memory`` consent and the
+    existing endpoint keep working unchanged.
     """
-    response = MemoryResponse(
-        student=student_ref(student),
-        scopes=link.scope_names,
-        summary="",
-        passages=[],
-        available=False,
+    student_ref = ParentStudentRef(
+        first_name=student.first_name or "",
+        grade=student.grade,
     )
+    scopes = list(link.scope_names or [])
 
-    agent_id = student.letta_agent_id
-    if not agent_id:
-        return response
+    growth: GrowthHistory | None = None
+    if db is not None and link.has_scope("memory"):
+        growth = build_growth(db, student)
 
-    client = client or LettaClient()
-    # An injected client (tests, future transports) opts in implicitly; the real
-    # Letta client still respects the LETTA_ENABLED kill switch.
-    if client.__class__ is LettaClient and not settings.LETTA_ENABLED:
-        return response
-
-    # --- core memory: the student's own "human" profile line only
-    try:
-        core = client.get_memory(agent_id) or {}
-        response.summary = _human_block(core)
-    except Exception:
-        logger.exception("parent memory: core memory read failed for student %s", student.id)
-
-    # --- archival: tag-filtered, newest first, capped
-    try:
-        raw_passages = client.get_archival(agent_id) or []
-        passages = []
-        for raw in raw_passages:
-            if not isinstance(raw, dict):
-                continue
-            text = (raw.get("text") or raw.get("content") or "").strip()
-            if not text:
-                continue
-            tags = _passage_tags(raw.get("tags"))
-            if not _is_shareable(tags):
-                continue
-            passages.append(
-                MemoryPassage(
-                    id=str(raw["id"]) if raw.get("id") is not None else None,
-                    text=text,
-                    created_at=_parse_dt(raw.get("created_at")),
-                    tags=tags,
-                )
-            )
-        passages.sort(key=lambda p: p.created_at or datetime.min, reverse=True)
-        response.passages = passages[:MAX_PASSAGES]
-        response.available = True
-    except Exception:
-        logger.exception("parent memory: archival read failed for student %s", student.id)
-
-    return response
-
-
-def _human_block(core: dict) -> str:
-    """Pull the ``human`` block's value, ignoring persona and any other block."""
-    blocks = core.get("memory") if isinstance(core, dict) else None
-    if isinstance(blocks, list):
-        for block in blocks:
-            if isinstance(block, dict) and str(block.get("label", "")).strip().lower() == "human":
-                return (block.get("value") or "").strip()
-    return ""
-
-
+    return MemoryResponse(
+        student=student_ref,
+        scopes=scopes,
+        growth=growth,
+    )

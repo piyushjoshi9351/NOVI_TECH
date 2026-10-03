@@ -18,8 +18,12 @@ const studentNav = [
   ["roadmap", "Roadmap"], ["passport", "Passport"], ["checkin", "Check-in"],
   ["profile", "Profile"],
 ];
+/* A parent gets its own navigation. Note there is deliberately no "Overview"
+ * entry pointing at /overview: that route renders the *student* OverviewPage,
+ * so linking a parent there would hand them a student dashboard. The parent's
+ * dashboard lives at /parent, which is also where the per-section tabs are. */
 const parentNav = [
-  ["parent", "My Children"], ["overview", "Overview"], ["advisor", "Parent Advisor"],
+  ["parent", "My Children"], ["advisor", "Ask Novi"],
 ];
 
 const NAV_ICONS = {
@@ -83,8 +87,10 @@ function Sidebar() {
       <nav className="nav">
         {items.map(([key, label]) => {
           const Icon = NAV_ICONS[key] || MessageCircle;
+          // prefix match, so /parent/<studentId> still lights up "My Children"
+          const active = pathname === `/${key}` || pathname.startsWith(`/${key}/`);
           return (
-            <Link key={key} href={`/${key}`} className={pathname === `/${key}` ? "active" : ""}>
+            <Link key={key} href={`/${key}`} className={active ? "active" : ""}>
               <Icon className="nav-ico" size={18} strokeWidth={2} />
               <span className="nav-label">{label}</span>
             </Link>
@@ -122,8 +128,11 @@ export function RootShell({ children }) {
   useEffect(() => {
     // appearance + route pre-warm only ever make sense in the browser
     bootAppearance();
-    warmAllRoutes();
   }, []);
+  useEffect(() => {
+    if (!ready || !user?.role) return;
+    warmAllRoutes(user.role);
+  }, [ready, user?.role]);
 
   // A student who hasn't finished onboarding sees ONLY the onboarding flow —
   // no dashboard, no nav, no other route — until it is complete.

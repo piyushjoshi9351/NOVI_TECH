@@ -38,15 +38,23 @@ CRITICAL_COLUMNS = [
 def _statements(path: Path) -> list[str]:
     """Split a migration file into individual statements.
 
-    Statements are terminated by ';' and `--` comment lines are dropped. The
-    migration files in this repo avoid ';' inside string literals, so a plain
-    split is safe here and keeps the runner free of a real SQL parser.
+    Statements are terminated by ';' and full-line ``--`` comments are dropped.
+
+    Comments are stripped BEFORE the split, not after. Splitting first looks
+    equivalent but isn't: a multi-line comment that mentions ';' (very easy when
+    documenting this runner, ironically) would be cut in half, and the surviving
+    fragment would be glued onto the front of the next statement, producing
+    invalid SQL that fails at apply time.
+
+    Assumes no ';' or '--' inside string literals, which holds for the migrations
+    in this repo and keeps the runner free of a real SQL parser.
     """
     raw = path.read_text(encoding="utf-8")
+    lines = [ln for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("--")]
+    body = "\n".join(lines)
     statements = []
-    for chunk in raw.split(";"):
-        lines = [ln for ln in chunk.splitlines() if ln.strip() and not ln.strip().startswith("--")]
-        stmt = " ".join(lines).strip()
+    for chunk in body.split(";"):
+        stmt = " ".join(chunk.split()).strip()
         if stmt:
             statements.append(stmt)
     return statements

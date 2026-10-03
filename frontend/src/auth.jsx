@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, clearApiCache, setApiToken, resetWarmAll } from "./api";
+import { api, clearApiCache, setApiToken, resetWarmAll, revokeImageUrls } from "./api";
 
 const AuthCtx = createContext(null);
 
@@ -22,6 +22,7 @@ export function AuthProvider({ children }) {
     if (u) setUser(u);
     resetWarmAll();
     clearApiCache();
+    revokeImageUrls();
     try {
       const me = await api("/auth/me");
       if (me) {
@@ -42,6 +43,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     resetWarmAll();
     clearApiCache();
+    revokeImageUrls();
     if (typeof window !== "undefined") window.location.href = "/signup";
   };
 

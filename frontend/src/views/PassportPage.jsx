@@ -1,18 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { api, esc, getDnaContext, PP_CATS, PP_ORDER, prettyDate, ppGuessCat, ppLevel, ringColor } from "../api";
+import { api, esc, getDnaContext, PP_CATS, PP_ORDER, prettyDate, ppGuessCat, ppLevel, ringColor, safeHttpUrl } from "../api";
 import { useAuth } from "../auth";
 import { EmptyState, Modal, showLoader, toast } from "../ui";
 
 let _ppFilter = "all";
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
-
-/* Only http(s) links are rendered as hrefs, so a stored `javascript:` URL
-   can't run when a passport entry's Proof link is clicked. */
-function safeHttpUrl(u) {
-  const s = String(u || "").trim();
-  return /^https?:\/\//i.test(s) ? s : null;
-}
 
 /* Read a picked file and hand back a data URL. Images are downscaled on the
    client first: a full-res phone photo would blow past the 2 MB backend cap and

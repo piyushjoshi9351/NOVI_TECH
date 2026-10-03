@@ -6,11 +6,19 @@ the internal ORM models on purpose: a new column added to e.g. ``users`` or
 
 Fields a parent must never receive are simply absent: conversations, DNA
 ``sources``/``excluded`` (raw chat quotes), check-in mood/energy/free-text
-notes, credentials, agent ids, and internal numeric ids of the student's
+notes, weekly priorities and tasks (day-to-day activity), credentials, agent
+ids, passport achievement titles, and internal numeric ids of the student's
 unrelated rows.
+
+The "Long-term memory" consent section was removed as a concept: it exposed raw
+Letta archival passages and the core-memory ``human`` block. It now projects
+``growth_milestones`` + ``growth_snapshots`` as "Growth history" (see
+``GrowthHistory``). The internal scope key stays ``memory`` so already-stored
+consents keep working with no migration of student choices.
 """
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -100,88 +108,162 @@ class StudentLinkList(BaseModel):
 
 # --------------------------------------------------------------------------- overview
 class OverviewGoal(BaseModel):
+    """A goal the student set for themselves. Title + category only."""
+
     id: int
     title: str
     category: str | None = None
-    status: str | None = None
-    target_date: date | None = None
 
 
-class OverviewPassport(BaseModel):
-    id: int
-    title: str
-    category: str | None = None
-    date_achieved: date | None = None
+class PassportCounts(BaseModel):
+    """Passport as COUNTS ONLY.
+
+    Deliberately no titles: an achievement title is frequently the student's own
+    free-text ("Won the science fair for my anxiety project"), which would leak
+    the kind of day-to-day detail parents are not entitled to. Counts carry the
+    same signal without the prose.
+    """
+
+    # category -> count, only categories with count > 0.
+    by_category: dict[str, int] = Field(default_factory=dict)
+    total: int = 0
+    verified: int = 0
 
 
-class OverviewRoadmapItem(BaseModel):
-    id: int
-    title: str
+class JourneyProgress(BaseModel):
+    """Where the student is in the 4-year arc, in friendly language."""
+
     grade: int | None = None
-    stage: str | None = None
-    category: str | None = None
-    completed: bool = False
+    stage_label: str | None = None
+    # 0-100 when a roadmap exists; None when there is nothing to measure.
+    roadmap_percent: int | None = None
 
 
-class OverviewWeekly(BaseModel):
-    week_start: date | None = None
-    priorities: list[str] = Field(default_factory=list)
-    completed_count: int = 0
-    total_count: int = 0
+class DnaSnapshotThemes(BaseModel):
+    """Top themes across the DNA. LABELS ONLY -- never ``sources``/``excluded``.
+
+    The DNA's ``sources`` column holds verbatim chat quotes plus conversation
+    ids, so it is not read for this projection at all.
+    """
+
+    themes: list[str] = Field(default_factory=list)
+
+
+class BasicOverview(BaseModel):
+    """The ``basic`` consent section: structure only, no free text beyond goals."""
+
+    school: str | None = None
+    career_direction: str | None = None
+    profile_strength: int | None = None
+    university_readiness: int | None = None
+    dna_snapshot: DnaSnapshotThemes | None = None
+    goals: list[OverviewGoal] = Field(default_factory=list)
+    journey: JourneyProgress | None = None
+    passport: PassportCounts | None = None
+    # False when onboarding has not finished -- the UI shows an empty state
+    # rather than a misleading "0 goals".
+    onboarding_complete: bool = False
 
 
 class OverviewResponse(BaseModel):
     """``basic`` scope: who they are and what they're working toward.
 
     Deliberately excludes anything free-text or emotional -- no check-in moods,
-    no notes, no chat content, no DNA evidence.
+    no notes, no chat content, no DNA evidence, and no weekly priority/task
+    text (day-to-day activity is the student's alone).
     """
 
     student: ParentStudentRef
     scopes: list[str] = Field(default_factory=list)
-    school: str | None = None
-    active_goals: list[OverviewGoal] = Field(default_factory=list)
-    recent_passport: list[OverviewPassport] = Field(default_factory=list)
-    upcoming_roadmap: list[OverviewRoadmapItem] = Field(default_factory=list)
-    this_week: OverviewWeekly | None = None
+    basic: BasicOverview | None = None
 
 
 # --------------------------------------------------------------------------- insights
+class ParentPassportItem(BaseModel):
+    """One passport entry, exposed to a parent under the ``insights`` scope.
+
+    Full parity with the student's own passport view: ``title``,
+    ``description``, ``skills``, ``date_achieved``, ``certificate_url`` and
+    ``verified``. Unlike :class:`PassportCounts` this is free text the student
+    wrote themselves, which is exactly why it sits behind the **revocable**
+    ``insights`` consent rather than the irrevocable ``basic`` one. Revoking
+    ``insights`` removes it immediately.
+    """
+
+    id: int
+    category: str
+    title: str
+    description: str = ""
+    skills: list[str] = Field(default_factory=list)
+    date_achieved: date | None = None
+    certificate_url: str | None = None
+    verified: bool = False
+
+
 class InsightsResponse(BaseModel):
     """``insights`` scope: derived, high-level direction.
 
-    Built only from the DNA's own structured fields and career matches. The
-    DNA's ``sources`` (raw chat quotes + conversation ids) and ``excluded`` are
-    never read here.
+    Built only from the DNA's own summary fields and ranked matches. The DNA's
+    ``sources`` (raw chat quotes + conversation ids) and ``excluded`` are never
+    read here.
     """
 
     student: ParentStudentRef
     scopes: list[str] = Field(default_factory=list)
+    status: str | None = None
+    focus_areas: list[str] = Field(default_factory=list)
+    novi_insight: str | None = None
     top_interests: list[str] = Field(default_factory=list)
     strengths: list[str] = Field(default_factory=list)
     career_zones: list[str] = Field(default_factory=list)
     top_career_matches: list[str] = Field(default_factory=list)
     profile_strength: int | None = None
     university_readiness: int | None = None
+    passport_items: list[ParentPassportItem] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- memory
-class MemoryPassage(BaseModel):
-    id: str | None = None
-    text: str
-    created_at: datetime | None = None
-    tags: list[str] = Field(default_factory=list)
+# --------------------------------------------------------------------------- growth
+# Replaces the old "Long-term memory" section.
+#
+# The internal scope key stays ``memory`` so every stored consent keeps working
+# untouched, but the section no longer exposes Letta in any form: no archival
+# passages, no core-memory blocks, no ``novistate``. It is a projection of two
+# of the student's OWN tables (growth_milestones, growth_snapshots).
+
+
+class GrowthMilestoneOut(BaseModel):
+    """A milestone the student COMPLETED. Titles only -- student-authored plans."""
+
+    title: str
+    completed_at: datetime | None = None
+
+
+class GrowthTrendPoint(BaseModel):
+    day: date
+    # Mean confidence across the graph that day, 0-100.
+    value: int
+
+
+class GrowthHistory(BaseModel):
+    """Parent-safe replacement for the "Long-term memory" section."""
+
+    completed_milestones: list[GrowthMilestoneOut] = Field(default_factory=list)
+    strength_trend: list[GrowthTrendPoint] = Field(default_factory=list)
+    # Convenience rollups; None when there is nothing to report.
+    milestones_completed: int | None = None
+    trend_change: int | None = None
 
 
 class MemoryResponse(BaseModel):
-    """``memory`` scope: read-only, curated view of the student's Letta memory."""
+    """``memory`` scope -- kept as the endpoint name for stored-consent compat.
+
+    Now a Growth-history projection. This model intentionally has NO field that
+    could carry raw memory: no passage text, no summary line, no agent id.
+    """
 
     student: ParentStudentRef
     scopes: list[str] = Field(default_factory=list)
-    summary: str = ""
-    passages: list[MemoryPassage] = Field(default_factory=list)
-    # Lets the UI distinguish "nothing shared yet" from "memory is unavailable".
-    available: bool = True
+    growth: GrowthHistory | None = None
 
 
 ParentLinkOut.model_rebuild()
@@ -194,9 +276,39 @@ class LinkStudentRequest(BaseModel):
     student_email: str = Field(min_length=3, max_length=255)
 
 
+# Hard ceiling on a single parent question. A parent question is untrusted input
+# that lands in an LLM prompt, so it is bounded both by length and (in the
+# service) by a per-parent rate limit.
+MAX_ADVISOR_QUESTION = 800
+
+# Ceilings on the optional conversation context. These are NOT a transcript
+# store: the turns travel with the request, are used for that one answer, and are
+# then dropped. Nothing is written to the database, so nothing reaches the
+# student's record.
+MAX_ADVISOR_HISTORY_TURNS = 12
+MAX_ADVISOR_HISTORY_LEN = 800
+
+
+class AdvisorTurn(BaseModel):
+    """One prior turn of the parent <-> Novi conversation.
+
+    Both fields are bounded because this is parent-authored untrusted text that
+    is spliced into a prompt; only ``parent`` and ``novi`` are accepted roles so
+    a caller cannot forge a system turn.
+    """
+
+    role: Literal["parent", "novi"]
+    content: str = Field(min_length=1, max_length=MAX_ADVISOR_HISTORY_LEN)
+
+
 class AdvisorAsk(BaseModel):
-    question: str = Field(min_length=1, max_length=2000)
+    question: str = Field(min_length=1, max_length=MAX_ADVISOR_QUESTION)
     child_id: int | None = None
+    # Recent turns for conversational continuity. Bounded, ephemeral, optional --
+    # omitting it keeps the original stateless one-shot behaviour.
+    history: list[AdvisorTurn] = Field(
+        default_factory=list, max_length=MAX_ADVISOR_HISTORY_TURNS
+    )
 
 
 class AdvisorResponse(BaseModel):

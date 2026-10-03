@@ -26,6 +26,30 @@ function _headers() {
 
 export function clearApiCache() { _apiCache.clear(); _apiInflight.clear(); _apiGen++; }
 
+const _blobUrls = new Map();
+
+/* Binary counterpart to `api`. Returns an object URL for an image endpoint,
+   or null when there is nothing to show -- including 404, which is a normal
+   outcome for a child with no photo, so it is cached as null rather than
+   retried on every render. Object URLs are revoked on logout. */
+export function apiImage(path) {
+  if (_blobUrls.has(path)) return _blobUrls.get(path);
+  if (!getApiToken()) return null;
+  const p = fetch(API + path, { headers: _headers(), signal: AbortSignal.timeout(30000) })
+    .then((res) => (res.ok ? res.blob() : null))
+    .then((blob) => (blob ? URL.createObjectURL(blob) : null))
+    .catch(() => null);
+  _blobUrls.set(path, p);
+  return p;
+}
+
+export function revokeImageUrls() {
+  for (const p of _blobUrls.values()) {
+    Promise.resolve(p).then((u) => { if (u) URL.revokeObjectURL(u); }).catch(() => {});
+  }
+  _blobUrls.clear();
+}
+
 function _revalidate(path, opts, key) {
   const gen = _apiGen;
   const p = fetch(API + path, { ...opts, headers: _headers() })
@@ -157,6 +181,11 @@ export function fmtJoined(iso) {
   return isNaN(d) ? "NOVI member" : `Joined ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
 }
 
+export function safeHttpUrl(u) {
+  const s = String(u || "").trim();
+  return /^https?:\/\//i.test(s) ? s : null;
+}
+
 export function prettyDate(d) {
   if (!d) return "";
   const dt = new Date(String(d).length === 10 ? d + "T00:00:00" : d);
@@ -195,10 +224,12 @@ export function warmRoute(key) {
   (ROUTE_WARM[key] || []).forEach((p) => { if (!_apiCache.has("GET " + p)) api(p).catch(() => {}); });
 }
 
-export function warmAllRoutes() {
+const PARENT_ROUTES = new Set(["parent", "overview"]);
+
+export function warmAllRoutes(role) {
   if (_warmAllStarted || !getApiToken()) return;
   _warmAllStarted = true;
-  const keys = Object.keys(ROUTE_WARM);
+  const keys = Object.keys(ROUTE_WARM).filter((k) => role !== "parent" || PARENT_ROUTES.has(k));
   let i = 0;
   const step = () => {
     if (!getApiToken() || i >= keys.length) return;

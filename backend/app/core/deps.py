@@ -76,9 +76,25 @@ def get_linked_student(
 ) -> tuple[User, ParentStudentLink]:
     """Resolve a path student_id to (student, link) for the CURRENT parent.
 
-    Only ACTIVE links pass. Pending links exist precisely so the student has not
-    consented yet, and a revoked link must lose access immediately -- both are
-    rejected here rather than being filtered out further downstream.
+    This is THE single authorization function for parent data. Every
+    ``/parent/students/{student_id}/*`` route depends on it (attached at router
+    level in ``app/api/parent.py``), so no handler can be added without
+    inheriting the check.
+
+    It verifies, in order:
+      1. the caller holds the ``parent`` role (``get_current_parent`` -> 403),
+      2. an ACTIVE link from THIS parent to THIS student exists,
+      3. the student exists, is a student, and is active.
+
+    Failures raise 404 (not 403) so a guessed or foreign student_id is
+    indistinguishable from "no such student" -- the endpoint cannot be used to
+    enumerate ids, and a revoked link loses access immediately rather than
+    being filtered out further downstream.
+
+    Which SECTIONS are consented is NOT an error condition here: it is read off
+    ``link`` and applied inside the projection
+    (``app.services.parent_projection``), so an unshared section renders as
+    "hasn't shared this" instead of a failed request.
     """
     link = db.scalar(
         select(ParentStudentLink)
@@ -99,16 +115,21 @@ def get_linked_student(
     return student, link
 
 
+# The name the rest of the codebase (and the docs) refers to. Same function --
+# kept as an explicit alias rather than a second implementation, so there is
+# exactly one place authorization can live.
+get_authorized_link = get_linked_student
+
+
 def require_scope(scope: str):
     """Build a dependency factory asserting the link grants ``scope``.
 
-    Usage::
+    Retained for any route that wants a hard 403 on a missing section. The
+    dashboard itself does NOT use this -- unshared sections are rendered as
+    empty, not as errors (see ``get_linked_student`` and the projection).
 
-        @router.get("/...", dependencies=[Depends(require_scope("insights"))])
-
-    Attaches to the router (or a route) so the check runs before the handler and
-    before any student data is loaded. An unknown scope name is a programming
-    error and raises at import time rather than silently granting access.
+    An unknown scope name is a programming error and raises at import time
+    rather than silently granting access.
     """
     if scope not in LINK_SCOPES:
         raise ValueError(f"Unknown link scope: {scope!r}")

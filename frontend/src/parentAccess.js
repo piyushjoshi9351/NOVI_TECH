@@ -16,24 +16,35 @@ export const GENERIC_INVITE_MESSAGE =
 export const homeForRole = (role, onboardingCompleted) =>
   role === "parent" ? "/parent" : onboardingCompleted ? "/dashboard" : "/onboarding";
 
-/** Scope ids are the backend's. "basic" can never be switched off. */
+/** Scope ids are the backend's. "basic" can never be switched off.
+ *
+ *  The id stays `memory` on purpose: it is the key already stored on every
+ *  existing consent, so renaming the id would silently revoke it. Only the
+ *  human-facing label changed -- "Long-term memory" promised a summary and
+ *  highlights, which is exactly what the backend used to hand over from Letta
+ *  (LLM-written paraphrases of the student's own conversations). What it
+ *  actually serves now is milestones and a confidence trend from the student's
+ *  own growth tables. The wording below describes that, so the consent the
+ *  student gives is the consent they actually get. */
 export const SCOPES = [
   {
     id: "basic",
     label: "Basic overview",
-    blurb: "Their grade, goals, passport and this week's priorities.",
+    blurb: "Their grade, current focus, goals, passport counts and journey stage.",
     locked: true,
   },
   {
     id: "insights",
     label: "Insights",
-    blurb: "Interests, strengths, career zones and match percentages.",
+    blurb:
+      "Interests, strengths and career areas Novi has spotted — plus the passport " +
+      "entries they've added, including what they've written about them.",
     locked: false,
   },
   {
     id: "memory",
-    label: "Long-term memory",
-    blurb: "A short summary and highlights Novi remembered. Never your conversations.",
+    label: "Growth history",
+    blurb: "Milestones they've completed and how their confidence has changed. Not their conversations or anything they tell Novi in private.",
     locked: false,
   },
 ];

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -48,8 +48,24 @@ async def parent_dashboard(parent: User = Depends(get_current_parent), db: Sessi
 @router.post("/advisor", response_model=AdvisorResponse)
 async def advisor(
     data: AdvisorAsk,
+    response: Response,
     parent: User = Depends(get_current_parent),
     db: Session = Depends(get_db),
 ):
-    answer = await parent_service.advisor(db, parent, data.question, data.child_id)
+    # A parent question is untrusted text headed for an LLM prompt: bounded by
+    # the schema's max_length and rate limited per parent. `history` carries the
+    # same guarantees (bounded turns, whitelisted roles) and is used only for
+    # this one answer -- nothing is written.
+    try:
+        parent_service.check_rate_limit(parent.id)
+    except parent_service.RateLimited:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many questions at once — please wait a moment.",
+        )
+
+    answer = await parent_service.advisor(
+        db, parent, data.question, data.child_id, history=data.history
+    )
+    response.headers.update({"Cache-Control": "no-store"})
     return AdvisorResponse(answer=answer)

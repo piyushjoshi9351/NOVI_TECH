@@ -20,6 +20,7 @@ from app.models.university import University, UniversityMatch
 from app.models.roadmap import Goal, RoadmapItem, Task, WeeklyPriority
 from app.models.passport import PassportItem
 from app.models.checkin import WeeklyCheckin
+from app.models.parent_insight_cache import ParentInsightCache
 
 __all__ = [
     "Career",
@@ -37,6 +38,7 @@ __all__ = [
     "MessageRole",
     "OnboardingAnswer",
     "OnboardingSession",
+    "ParentInsightCache",
     "ParentStudentLink",
     "PassportCategory",
     "PassportItem",

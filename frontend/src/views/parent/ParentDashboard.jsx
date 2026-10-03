@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, esc } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -14,6 +15,7 @@ import {
   scopeMeta,
 } from "../../parentAccess";
 import { EmptyState, Pill, showLoader, toast } from "../../ui";
+import { ParentAvatar } from "./ParentAvatar";
 
 /**
  * Parent dashboard — every student this parent has a link to, with the ones
@@ -25,6 +27,15 @@ export default function ParentDashboard() {
   const [links, setLinks] = useState(null);
   const [error, setError] = useState(null);
   const [email, setEmail] = useState("");
+  // "children" (default) or "request". Kept in the URL so the tab is linkable,
+  // survives a refresh, and works with the back button.
+  const router = useRouter();
+  const params = useSearchParams();
+  const view = params.get("tab") === "request" ? "request" : "children";
+  const setView = useCallback(
+    (next) => router.push(next === "children" ? "?tab=children" : "?tab=request", { scroll: false }),
+    [router]
+  );
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -68,38 +79,98 @@ export default function ParentDashboard() {
   const revoked = links.filter(isRevoked);
   const firstName = (user?.first_name || "").trim();
 
+  const total = active.length + pending.length + revoked.length;
+
   return (
-    <div className="pd-wrap">
-      <div className="pd-hero">
-        <div className="eyebrow">Parent space</div>
-        <h1>{firstName ? `Hello, ${esc(firstName)}` : "Your children"}</h1>
-        <p>
-          A calm view of where things stand — goals, strengths and this week&apos;s
-          priorities. Your child controls what appears here.
-        </p>
+    <div className="dash-wrap pd-wrap">
+      <div className="dash-top">
+        <div className="dash-intro">
+          <div className="dash-kick">Parent space</div>
+          <h1 className="dash-hi">{firstName ? `Hello, ${esc(firstName)}` : "Your children"}</h1>
+          <p className="dash-sub">
+            A calm view of where things stand — goals, strengths and progress. Your child
+            controls what appears here, section by section, and can change it at any time.
+          </p>
+        </div>
+        <div className="dash-tools">
+          <button
+            className="btn"
+            onClick={() => setView("request")}
+            disabled={view === "request"}
+          >
+            Request access
+          </button>
+        </div>
       </div>
 
-      <div className="pd-request card">
-        <h2>Request access to another student</h2>
-        <p className="small muted">
-          Enter the email they signed up with. They&apos;ll get a request and choose
-          what to share — nothing is visible to you before that.
-        </p>
-        <form className="pd-request-row" onSubmit={request}>
-          <input
-            aria-label="Student email"
-            placeholder="child@school.edu"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            type="email"
-            autoComplete="off"
-          />
-          <button className="btn" disabled={busy}>{busy ? "Sending…" : "Send request"}</button>
-        </form>
+      {/* Two tabs rather than one long page: browsing your children and asking
+          for a new one are different jobs, and the request form is a one-shot
+          action that shouldn't sit above the list you came to read. The tab is
+          in the URL so it's linkable and survives a refresh. */}
+      <div className="pd-tabs" role="tablist" aria-label="Parent sections">
+        <button
+          role="tab"
+          aria-selected={view === "children"}
+          className={`pd-tab${view === "children" ? " on" : ""}`}
+          onClick={() => setView("children")}
+        >
+          <span className="pd-tab-label">
+            Your children{total ? ` · ${total}` : ""}
+          </span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === "request"}
+          className={`pd-tab${view === "request" ? " on" : ""}`}
+          onClick={() => setView("request")}
+        >
+          <span className="pd-tab-label">Request access</span>
+        </button>
       </div>
 
-      <div className="section-title">Your children</div>
+      {view === "request" ? (
+        <div className="ln-grid">
+          <div className="ln-main">
+            <section className="ln-section">
+              <div className="card">
+                <h2 style={{ margin: 0 }}>Request access to another student</h2>
+                <p className="small muted">
+                  Enter the email they signed up with. They&apos;ll get a request and
+                  choose what to share — nothing is visible to you before that.
+                </p>
+                <form className="pd-request-row" onSubmit={request}>
+                  <input
+                    aria-label="Student email"
+                    placeholder="child@school.edu"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    type="email"
+                    autoComplete="off"
+                  />
+                  <button className="btn" disabled={busy}>
+                    {busy ? "Sending…" : "Send request"}
+                  </button>
+                </form>
+              </div>
+            </section>
+          </div>
+          <aside className="ln-rail">
+            <div className="card ln-card">
+              <div className="ln-card-head">
+                <span className="ln-ico" aria-hidden="true">🔒</span>
+                <h3>What you&apos;ll see</h3>
+              </div>
+              <p className="small muted">
+                Nothing until they approve. After that you still only see the sections
+                they choose — and they can turn any of them off again at any time.
+              </p>
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
+      {view === "children" ? (
+      <>
       {!active.length && !pending.length && !revoked.length ? (
         <EmptyState
           title="No students yet"
@@ -117,13 +188,20 @@ export default function ParentDashboard() {
                 href={link.student_id ? `/parent/${link.student_id}` : "/parent"}
                 className="card pd-card"
               >
-                <div className="between">
-                  <h3 style={{ margin: 0 }}>{esc(linkName(link))}</h3>
+                <div className="between pd-card-top">
+                  <ParentAvatar
+                    studentId={link.student_id}
+                    name={linkName(link)}
+                    size={44}
+                  />
+                  <div className="pd-card-id">
+                    <h3 style={{ margin: 0 }}>{esc(linkName(link))}</h3>
+                    <div className="small muted">
+                      Grade {link.student?.grade ?? "—"} · sharing {scopes.length} of 3 sections
+                    </div>
+                  </div>
                   <Pill label={STATUS_LABEL.active} tone={STATUS_TONE.active} />
                 </div>
-                <p className="small muted">
-                  Grade {link.student?.grade ?? "—"} · sharing {scopes.length} of 3 sections
-                </p>
                 <div className="row pd-scopes">
                   {["basic", "insights", "memory"].map((id) => (
                     <span key={id} className={`chip ${scopes.includes(id) ? "acc" : ""}`}>
@@ -180,6 +258,8 @@ export default function ParentDashboard() {
             ))}
           </div>
         </>
+      ) : null}
+      </>
       ) : null}
     </div>
   );
