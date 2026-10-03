@@ -54,7 +54,21 @@ export async function api(path, opts = {}) {
     const res = await fetch(API + path, { ...opts, headers: _headers() });
     let data = null;
     try { data = await res.json(); } catch (_) {}
-    if (!res.ok) { const msg = data && data.detail ? data.detail : `Request failed (${res.status})`; throw new Error(msg); }
+    if (!res.ok) {
+      // FastAPI puts a string in `detail` for HTTPException but a LIST of
+      // objects for 422 validation errors, so normalise both into a sentence.
+      const d = data && data.detail;
+      let msg;
+      if (typeof d === "string") msg = d;
+      else if (Array.isArray(d)) msg = d.map((e) => e && e.msg).filter(Boolean).join(" ");
+      else msg = `Request failed (${res.status})`;
+      const err = new Error(msg);
+      // `status` lets a caller tell a scope denial (403) from a real failure
+      // without string-matching the message. Additive: `message` is unchanged.
+      err.status = res.status;
+      err.detail = d;
+      throw err;
+    }
     if (method === "GET" && gen === _apiGen) _apiCache.set(key, { data, ts: Date.now() });
     return data;
   };
@@ -158,6 +172,7 @@ const ROUTE_WARM = {
   passport: ["/passport", "/passport/completion", "/dna/context"],
   checkin: ["/checkins/current", "/checkins", "/checkins/planner/day", "/dna/context"],
   overview: ["/parents/dashboard"],
+  parent: ["/parent/students"],
   profile: ["/auth/me", "/dna", "/auth/links"],
 };
 

@@ -9,14 +9,29 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
 
-  const login = (tk, u) => {
+  // The token response carries a role, but /auth/me is the authority (the role
+  // lives in the database and can never be chosen by a client). We set state
+  // immediately so nothing flashes, then reconcile against /auth/me and return
+  // the authoritative user — callers can await login() to route on the REAL
+  // role rather than on whichever tab the person picked.
+  const login = async (tk, u) => {
     localStorage.setItem("novi_token", tk);
-    localStorage.setItem("novi_user", JSON.stringify(u));
+    if (u) localStorage.setItem("novi_user", JSON.stringify(u));
     setApiToken(tk);
     setToken(tk);
-    setUser(u);
+    if (u) setUser(u);
     resetWarmAll();
     clearApiCache();
+    try {
+      const me = await api("/auth/me");
+      if (me) {
+        localStorage.setItem("novi_user", JSON.stringify(me));
+        setUser(me);
+      }
+      return me || u || null;
+    } catch (_) {
+      return u || null;
+    }
   };
 
   const logout = () => {
@@ -67,7 +82,7 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const value = { token, user, ready, login, logout, patchUser, refreshUser };
+  const value = { token, user, role: user?.role || null, ready, login, logout, patchUser, refreshUser };
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 

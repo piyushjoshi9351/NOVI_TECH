@@ -6,6 +6,18 @@ class UserRole(str, enum.Enum):
     PARENT = "parent"
 
 
+class LinkStatus(str, enum.Enum):
+    """Lifecycle of a parent -> student link.
+
+    A link is NEVER auto-activated: it starts PENDING and only the student can
+    move it to ACTIVE (approve) or REVOKED.
+    """
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
 class PassportCategory(str, enum.Enum):
     PROJECTS = "projects"
     COMPETITIONS = "competitions"

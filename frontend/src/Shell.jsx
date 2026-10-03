@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  BookMarked, Briefcase, CalendarCheck, Dna, GraduationCap, LayoutDashboard, LogOut, Map, MessageCircle, Moon, Sparkles, Sun, UserRound,
+  Baby, BookMarked, Briefcase, CalendarCheck, Dna, GraduationCap, LayoutDashboard, LogOut, Map, MessageCircle, Moon, Sparkles, Sun, UserRound,
 } from "lucide-react";
 import { AuthProvider, useAuth } from "./auth";
 import { applyTheme, bootAppearance, getTheme, setPrefKey, warmAllRoutes } from "./api";
@@ -18,7 +18,9 @@ const studentNav = [
   ["roadmap", "Roadmap"], ["passport", "Passport"], ["checkin", "Check-in"],
   ["profile", "Profile"],
 ];
-const parentNav = [["overview", "Overview"], ["advisor", "Parent Advisor"]];
+const parentNav = [
+  ["parent", "My Children"], ["overview", "Overview"], ["advisor", "Parent Advisor"],
+];
 
 const NAV_ICONS = {
   dashboard: LayoutDashboard,
@@ -32,6 +34,7 @@ const NAV_ICONS = {
   profile: UserRound,
   overview: LayoutDashboard,
   advisor: Sparkles,
+  parent: Baby,
 };
 
 function ThemeToggle() {

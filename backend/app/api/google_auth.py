@@ -1,6 +1,6 @@
+import hmac
 import logging
 import secrets
-from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -17,20 +17,26 @@ router = APIRouter(tags=["auth"])
 
 
 @router.get("/auth/google", include_in_schema=False)
-async def google_oauth_start(next: str = "/login"):
+async def google_oauth_start(next: str = "/login", intent: str = "student"):
     """Redirect the browser to Google's consent screen.
 
     `next` is the frontend route (/login or /signup) the user returns to.
-    A CSRF nonce is stored in an httpOnly cookie and echoed in the OAuth `state`.
+    `intent` ("student" | "parent") records which app they started in so a new
+    account is created with the right role. It is HMAC-signed into `state`.
+
+    A CSRF nonce is stored in an httpOnly cookie AND echoed in the OAuth `state`.
     """
     if not auth_service.google_is_configured():
         raise HTTPException(status_code=503, detail="Google OAuth is not configured")
     if not _safe_next(next):
         next = "/login"
+    if intent not in ("student", "parent"):
+        intent = "student"
 
-    state = secrets.token_urlsafe(32)
-    response = RedirectResponse(auth_service.build_google_authorize_url(state, next), status_code=302)
-    response.set_cookie("google_oauth_state", state, max_age=600, httponly=True, samesite="lax")
+    nonce = secrets.token_urlsafe(32)
+    url = auth_service.build_google_authorize_url(nonce, next, intent)
+    response = RedirectResponse(url, status_code=302)
+    response.set_cookie("google_oauth_state", nonce, max_age=600, httponly=True, samesite="lax")
     return response
 
 
@@ -49,16 +55,22 @@ async def google_oauth_callback(
     if not expected:
         return _google_fail(request, detail="google_oauth_expired")
 
-    csrf, _, next_path = state.partition(":")
-    next_path = unquote(next_path)
-    if not _safe_next(next_path):
-        next_path = "/login"
-    if csrf != expected:
-        logger.warning("google OAuth state mismatch (CSRF guard) for path %s", next_path)
+    verified = auth_service.verify_oauth_state(state)
+    if verified is None:
+        logger.warning("google OAuth state signature invalid")
         return _google_fail(request, detail="google_oauth_verification_failed")
 
+    csrf, intent, next_path = verified
+    if not _safe_next(next_path):
+        next_path = "/login"
+    if not hmac.compare_digest(csrf, expected):
+        logger.warning("google OAuth state mismatch (CSRF guard) for path %s", next_path)
+        return _google_fail(request, detail="google_oauth_verification_failed")
+    if intent not in ("student", "parent"):
+        intent = "student"
+
     try:
-        user, is_new = await auth_service.google_login(code, db)
+        user, is_new = await auth_service.google_login(code, db, intent)
     except HTTPException as exc:
         logger.warning("google login rejected: %s", exc.detail)
         return _google_fail(request, detail="google_oauth_rejected")

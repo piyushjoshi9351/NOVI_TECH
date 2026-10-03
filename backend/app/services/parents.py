@@ -1,11 +1,13 @@
-from fastapi import HTTPException
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.enums import LinkStatus
 from app.models.roadmap import RoadmapItem
-from app.models.user import ParentStudentLink, User, UserRole
+from app.models.user import ParentStudentLink, User
 from app.llm import prompts
 from app.schemas.dashboard import ParentChildSummary
+from app.services import parent_links
 from app.services import roadmap as roadmap_svc
 from app.services import universities as uni_svc
 from app.services.career_dna import get_dna
@@ -13,29 +15,35 @@ from app.services.dashboard import progress_indicators
 from app.services.providers import fallback_insight, gemini
 
 
-def link_student(db: Session, parent: User, student_email: str) -> User:
-    student = db.scalar(select(User).where(User.email == student_email.lower()))
-    if not student:
-        raise HTTPException(status_code=404, detail="No student found with that email")
-    if student.role != UserRole.STUDENT:
-        raise HTTPException(status_code=400, detail="That account is not a student")
-    existing = db.scalar(
-        select(ParentStudentLink).where(
-            ParentStudentLink.parent_id == parent.id,
-            ParentStudentLink.student_id == student.id,
-        )
-    )
-    if not existing:
-        db.add(ParentStudentLink(parent_id=parent.id, student_id=student.id))
-        db.commit()
-    return student
+def request_link(db: Session, parent: User, student_email: str) -> ParentStudentLink:
+    """Legacy instant-link entry point (POST /parents/link).
+
+    Now delegates to the consent flow: a link is created PENDING and must be
+    approved by the student. The old behavior -- silently gaining access to a
+    student by knowing their email -- is exactly what this prompt removes.
+
+    The returned link is echoed to the caller only so the UI can tell "you are
+    connected" apart from "request sent"; it never reveals whether the target
+    email belongs to an existing account.
+    """
+    return parent_links.create_pending_link(db, parent, student_email)
 
 
 def linked_students(db: Session, parent: User) -> list[User]:
+    """Students this parent has an ACTIVE link to.
+
+    Only ``status='active'`` links count: a pending link means the student has
+    not consented, and a revoked link must lose access immediately. Applying the
+    filter here (rather than per endpoint) means the legacy dashboard/advisor
+    routes cannot accidentally serve unapproved or withdrawn students.
+    """
     rows = db.scalars(
         select(User)
         .join(ParentStudentLink, ParentStudentLink.student_id == User.id)
-        .where(ParentStudentLink.parent_id == parent.id)
+        .where(
+            ParentStudentLink.parent_id == parent.id,
+            ParentStudentLink.status == LinkStatus.ACTIVE,
+        )
     )
     return list(rows)
 

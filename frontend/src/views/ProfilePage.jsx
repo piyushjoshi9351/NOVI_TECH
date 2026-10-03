@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, BookOpen, Check, CreditCard, Link as LinkIcon, LogOut, Palette, Shield, Sparkles, UserRound } from "lucide-react";
+import { Bell, BookOpen, Check, CreditCard, Link as LinkIcon, LogOut, Palette, Shield, Sparkles, UserRound, Users } from "lucide-react";
 import { api, applyAccent, applyTheme, esc, fmtJoined, getTheme, initials, NOVI_ACCENTS, PS_NOTIFS, readPrefs, refreshDnaContext, savePrefs } from "../api";
 import { useAuth } from "../auth";
 import { EmptyState, showLoader, toast } from "../ui";
+import ParentAccess from "./student/ParentAccess";
 
 const PS_TAGS = [
   ["interests", "Interests", "Coding, cricket, music…", "What you genuinely enjoy — Novi weighs it in every match."],
@@ -11,11 +12,12 @@ const PS_TAGS = [
   ["subjects", "Subjects", "Maths, computer science…", "School subjects you actually like."],
 ];
 
-const PS_ICON = { profile: UserRound, academic: BookOpen, security: Shield, notifications: Bell, appearance: Palette, integrations: LinkIcon, billing: CreditCard };
+const PS_ICON = { profile: UserRound, academic: BookOpen, security: Shield, notifications: Bell, appearance: Palette, integrations: LinkIcon, billing: CreditCard, parents: Users };
 
 const PS_TABS = [
   ["profile", "Profile"],
   ["academic", "Academic"],
+  ["parents", "Parent access"],
   ["security", "Security"],
   ["notifications", "Notifications"],
   ["appearance", "Appearance"],
@@ -79,7 +81,13 @@ export default function ProfilePage() {
   if (!user) return null;
 
   const dnaReady = dna && dna.dna_filled;
-  const tabs = PS_TABS.filter(([key]) => key !== "academic" || user.role === "student");
+  // Parent access only means something on a student account; parents manage
+  // their own side from the parent area instead.
+  const tabs = PS_TABS.filter(([key]) => {
+    if (key === "academic") return user.role === "student";
+    if (key === "parents") return user.role === "student";
+    return true;
+  });
 
   const addTag = (key, v) => setTags((t) => {
     const cur = t[key] || [];
@@ -257,6 +265,8 @@ export default function ProfilePage() {
               <div className="ps-save"><button className="btn" onClick={saveAcademic}>Save changes</button></div>
             </>
           ) : null}
+
+          {tab === "parents" ? <ParentAccess /> : null}
 
           {tab === "security" ? (
             <>

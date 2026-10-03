@@ -5,9 +5,19 @@ from app.core import security
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
-from app.schemas.auth import LoginRequest, PasswordChange, SignupRequest, TokenResponse, UserUpdate
+from app.schemas.auth import (
+    LoginRequest,
+    MeResponse,
+    ParentRegisterRequest,
+    ParentRegisterResponse,
+    PasswordChange,
+    SignupRequest,
+    TokenResponse,
+    UserUpdate,
+)
 from app.schemas.common import RoleBase
 from app.services import auth as auth_service
+from app.services.parent_links import GENERIC_INVITE_MESSAGE
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,9 +39,36 @@ async def login(data: LoginRequest, db: Session = Depends(get_db)):
     return _token_response(user)
 
 
-@router.get("/me", response_model=RoleBase)
+@router.post(
+    "/parent/register",
+    response_model=ParentRegisterResponse,
+    status_code=201,
+    tags=["auth"],
+)
+async def register_parent(data: ParentRegisterRequest, db: Session = Depends(get_db)):
+    """Self-service parent signup.
+
+    The role is fixed to `parent` on the server -- there is no role field on the
+    request body. Also creates the student's invitation, so a parent lands with
+    a pending request rather than an empty dashboard.
+    """
+    user, link = auth_service.register_parent(data, db)
+    return ParentRegisterResponse(
+        user=RoleBase.model_validate(user),
+        link_id=link.id,
+        message=GENERIC_INVITE_MESSAGE,
+    )
+
+
+@router.get("/me", response_model=MeResponse)
 async def me(user: User = Depends(get_current_user)):
-    return user
+    """Current identity.
+
+    Role and profile come from the database row (via get_current_user), never
+    from the JWT body, so a stale or forged token cannot change what the client
+    is told about itself.
+    """
+    return auth_service.me(user)
 
 
 @router.patch("/me", response_model=RoleBase)
