@@ -4,6 +4,7 @@ import { api, initials, streamChat } from "../api";
 import { useAuth } from "../auth";
 import { EmptyState, showLoader, toast } from "../ui";
 import Markdown from "./chat/Markdown";
+import NoviRobot from "./chat/NoviRobot";
 
 function fmtAgo(iso) {
   if (!iso) return "";
@@ -67,10 +68,16 @@ export default function ChatPage() {
 
   const userName = user?.first_name || user?.name || "You";
   const firstName = String(user?.first_name || user?.name || "there").split(" ")[0];
+  /* Show the uploaded Passport photo in chat; fall back to initials. Only raster
+   * data URLs are ever stored server-side, so no URL sanitising is needed here. */
+  const userPhoto =
+    typeof user?.profile_photo === "string" && user.profile_photo.startsWith("data:image/")
+      ? user.profile_photo
+      : null;
 
   const refreshConvos = useCallback(async () => {
     try {
-      setConvos(await api("/chat/conversations"));
+      setConvos(await api("/chat/conversations", { fresh: true }));
     } catch (_) {
       /* best-effort refresh */
     }
@@ -305,8 +312,8 @@ export default function ChatPage() {
           <button type="button" className="chat-rail-btn" onClick={() => setRailOpen(true)} aria-label="Show conversations">
             <PanelLeft size={18} />
           </button>
-          <div className="chat-avatar" aria-hidden="true">
-            N
+          <div className="chat-avatar chat-avatar-bot">
+            <NoviRobot state={streaming ? "typing" : "idle"} />
           </div>
           <div className="chat-head-info">
             <div className="chat-head-name">Novi</div>
@@ -330,8 +337,16 @@ export default function ChatPage() {
                 const time = msgTime(m.created_at || m.createdAt || m.timestamp);
                 return (
                   <div className={`chat-row ${mine ? "user" : "novi"}`} key={m.id ?? `m-${i}`}>
-                    <div className="chat-avatar" aria-hidden="true">
-                      {mine ? initials(userName) : "N"}
+                    <div className="chat-avatar">
+                      {mine ? (
+                        userPhoto ? (
+                          <img className="chat-avatar-img" src={userPhoto} alt="" />
+                        ) : (
+                          initials(userName)
+                        )
+                      ) : (
+                        <NoviRobot state={streaming ? "typing" : "idle"} />
+                      )}
                     </div>
                     <div className="chat-stack">
                       <div className={`chat-bubble${m.isError ? " is-error" : ""}`}>
@@ -386,8 +401,8 @@ export default function ChatPage() {
 
           {streaming ? (
             <div className="chat-row novi">
-              <div className="chat-avatar" aria-hidden="true">
-                N
+              <div className="chat-avatar">
+                <NoviRobot state="typing" />
               </div>
               <div className="chat-stack">
                 <div className="chat-bubble">

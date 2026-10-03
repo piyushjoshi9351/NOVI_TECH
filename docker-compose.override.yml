@@ -1,0 +1,21 @@
+# Local dev override: publish infra ports so the backend can run natively
+# (venv + uvicorn --reload) instead of inside the backend container.
+#
+# NOTE: this machine already runs a native MySQL 9.4 on port 3306
+# (/usr/local/mysql, and it holds the populated `novi_db`), and backend/.env
+# points at localhost:3306. So do NOT start the compose `mysql` service -- it
+# cannot bind 3306 and `docker compose up -d` will fail.
+#
+#   docker compose up -d letta postgres redis   # infra (this project's setup)
+#   cd backend && ../backend/venv/bin/python -m uvicorn app.main:app --reload
+#   cd frontend && npm run dev
+services:
+  letta:
+    ports:
+      - "8283:8283"
+  redis:
+    ports:
+      - "6379:6379"
+  postgres:
+    ports:
+      - "5432:5432"

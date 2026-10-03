@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"
     GEMINI_SYNC_DELAY: float = 4.0  # seconds between calls (free-tier friendly)
+    GEMINI_TIMEOUT_SECONDS: float = 60.0
 
     # --- Local LLM fallback (keeps every AI feature working when Gemini is out of quota) ---
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
@@ -57,9 +58,8 @@ class Settings(BaseSettings):
     LETTA_BASE_URL: str = "http://localhost:8283"
     LETTA_API_KEY: str = ""
     LETTA_ENABLED: bool = True
-    # Letta 0.16.x + current Gemini models is broken (MALFORMED_FUNCTION_CALL);
-    # the local Ollama model drives agents reliably. Keep Gemini for extraction/matching.
     LETTA_MODEL: str = "ollama/llama3.2:3b"
+    LETTA_EMBEDDING: str = "ollama/nomic-embed-text:latest"
 
     # --- Voice onboarding (ElevenLabs) ---
     ELEVENLABS_API_KEY: str = ""

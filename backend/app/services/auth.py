@@ -17,9 +17,20 @@ from app.schemas.auth import (
     ParentRegisterRequest,
     SignupRequest,
     UserUpdate,
+    validate_image_data_url,
 )
 from app.services import parent_links
 from app.services.providers import memory
+
+
+def _clean_link(link: dict) -> dict:
+    """Keep only a trimmed label + http(s) URL, so the profile can't inject
+    javascript: URLs or unbounded junk into every page that renders it."""
+    label = str(link.get("label", "")).strip()[:60]
+    url = str(link.get("url", "")).strip()
+    if url and not url.lower().startswith(("http://", "https://")):
+        url = ""
+    return {"label": label, "url": url[:500]}
 
 
 async def signup(data: SignupRequest, db: Session) -> User:
@@ -127,6 +138,8 @@ def me(user: User) -> MeResponse:
         grade=user.grade,
         school=user.school,
         avatar=user.avatar,
+        profile_photo=user.profile_photo,
+        banner_photo=user.banner_photo,
         onboarding_completed=user.onboarding_completed,
     )
 
@@ -142,6 +155,18 @@ def update_profile(user: User, data: UserUpdate, db: Session) -> User:
         user.school = data.school
     if data.avatar is not None:
         user.avatar = data.avatar or None
+    # "" clears a field; None means "leave it alone", so the editor can save one
+    # field without wiping the others.
+    for field in ("headline", "location", "about_me"):
+        value = getattr(data, field, None)
+        if value is not None:
+            setattr(user, field, value.strip() or None)
+    if data.links is not None:
+        user.links = [_clean_link(x) for x in data.links] or None
+    for field in ("profile_photo", "banner_photo"):
+        value = getattr(data, field, None)
+        if value is not None:
+            setattr(user, field, validate_image_data_url(value, field))
     db.commit()
     db.refresh(user)
     return user

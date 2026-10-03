@@ -1,4 +1,4 @@
-"""End-to-end verification of 0003_parent_student_links_invites.sql against MySQL.
+"""End-to-end verification of 0004_parent_student_links_invites.sql against MySQL.
 
 Runs the real migration runner against a throwaway database that is seeded with
 the PRE-migration table shape and rows, then asserts:
@@ -8,7 +8,7 @@ the PRE-migration table shape and rows, then asserts:
   * all unique keys/indexes exist,
   * re-running the migration is a no-op (idempotency).
 
-Usage:  python -m scripts.verify_migration_0003
+Usage:  python -m scripts.verify_migration_0004
 Not part of the pytest suite (needs a live MySQL); run it deliberately.
 """
 
@@ -23,7 +23,7 @@ from sqlalchemy.engine import make_url  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.db import run_migrations as runner  # noqa: E402
 
-SCRATCH_DB = "novi_mig0003_test"
+SCRATCH_DB = "novi_mig0004_test"
 
 OLD_SCHEMA = """
 CREATE TABLE `parent_student_links` (
@@ -81,7 +81,7 @@ def main() -> int:
             """))
             c.execute(text(OLD_SCHEMA))
             # Pretend the earlier migrations already ran: this script only cares
-            # about 0003, and 0001/0002 need the full app schema.
+            # about 0004, and 0001/0002 need the full app schema.
             c.execute(text(
                 "INSERT INTO schema_migrations (filename, applied_at) VALUES "
                 "('0001_conversational_onboarding.sql', NOW()), ('0002_m3_goals_legacy_goal_id.sql', NOW())"

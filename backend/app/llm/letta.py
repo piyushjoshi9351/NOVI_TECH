@@ -104,10 +104,19 @@ class LettaClient:
     def is_reachable(self, timeout: float = 3.0) -> bool:
         try:
             with httpx.Client(timeout=timeout) as client:
-                client.get(f"{self.base_url}/v1/agents/", headers=self._headers(), params={"limit": 1})
+                response = client.get(f"{self.base_url}/v1/agents/", headers=self._headers(), params={"limit": 1})
+                response.raise_for_status()
             return True
         except Exception:  # network / DNS / refused
             return False
+
+    def agent_exists(self, agent_id: str) -> bool:
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(f"{self.base_url}/v1/agents/{agent_id}", headers=self._headers())
+            if response.status_code == 404:
+                return False
+            response.raise_for_status()
+            return True
 
     def create_agent(
         self,
@@ -123,7 +132,7 @@ class LettaClient:
         payload = {
             "name": f"Novi-{safe_name}",
             "model": settings.LETTA_MODEL,
-            "embedding": "ollama/nomic-embed-text:latest",
+            "embedding": settings.LETTA_EMBEDDING,
             "description": f"AI mentor for {safe_name}, Grade {grade}",
             "include_base_tools": False,
             "tools": ["memory", "conversation_search", "archival_memory_insert", "archival_memory_search"],
@@ -229,7 +238,14 @@ class LettaClient:
                 headers=self._headers(),
             )
             resp.raise_for_status()
-            return resp.json().get("results", [])
+            # The search endpoint labels the passage body "content", while the
+            # list/create endpoints label it "text". Normalize to "text" so
+            # callers (recall_context, timeline) don't silently read "".
+            results = resp.json().get("results", [])
+            for r in results:
+                if isinstance(r, dict) and "text" not in r and r.get("content") is not None:
+                    r["text"] = r["content"]
+            return results
 
     def get_archival(self, agent_id: str) -> list:
         with httpx.Client(timeout=30.0) as client:

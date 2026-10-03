@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, esc, getDnaContext, ringColor } from "../api";
-import { EmptyState, Kicker, showLoader } from "../ui";
+import { EmptyState, Kicker, showLoader, toast } from "../ui";
 
 export default function UniversitiesPage() {
   const router = useRouter();
@@ -10,6 +10,9 @@ export default function UniversitiesPage() {
   const [rows, setRows] = useState([]);
   const [recommended, setRecommended] = useState([]);
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [aiAnswer, setAiAnswer] = useState("");
 
   // filter inputs (single source of truth)
   const [vals, setVals] = useState({ country: "", course: "", subject: "", university_type: "", min_rank: "", max_fees: "", entry_query: "", scholarships: false });
@@ -36,7 +39,7 @@ export default function UniversitiesPage() {
         setRows(r || []);
         setResults(r || []);
         setRecommended(rec || []);
-        setCountMsg(`Showing <b>${(r || []).length}</b> universities`);
+        setCountMsg(`Showing ${(r || []).length} universities`);
       })
       .catch((ex) => { if (alive) setError(ex.message); })
       .finally(() => showLoader(false));
@@ -192,9 +195,39 @@ export default function UniversitiesPage() {
     changeAndApply(key, value);
   };
 
+  const refreshFromChats = async () => {
+    setBusy(true);
+    setActionError("");
+    try {
+      await api("/dna/refresh", { method: "POST" });
+      setRecommended(await api("/universities/recommended"));
+      setDctx(await getDnaContext());
+      setAiAnswer("");
+      toast("University recommendations updated from your chats");
+    } catch (ex) { setActionError(ex.message); toast(ex.message, "err"); }
+    finally { setBusy(false); }
+  };
+
+  const askAI = async () => {
+    setBusy(true);
+    setActionError("");
+    try {
+      const result = await api("/universities/advice", { method: "POST", body: JSON.stringify({ question: "Which university fits my interests and goals, and what should I verify before applying?", subject: vals.subject || null }) });
+      setAiAnswer(result.answer || "No advice available yet.");
+    } catch (ex) { setActionError(ex.message); toast(ex.message, "err"); }
+    finally { setBusy(false); }
+  };
+
   return (
     <>
+      {busy && <p role="status">Working on your request…</p>}
+      {actionError && <p role="alert">{actionError}</p>}
       <div className="hero"><Kicker>Find your program</Kicker><h1>University Explorer</h1><p>Global programs, weighted to your DNA and your readiness.</p></div>
+      <div className="row mb">
+        <button className="btn-ghost" onClick={refreshFromChats} disabled={busy}>Refresh from chats</button>
+        <button className="btn" onClick={askAI} disabled={busy}>Ask AI</button>
+      </div>
+      {aiAnswer ? <div className="card mb" style={{ whiteSpace: "pre-wrap" }} role="status">{aiAnswer}</div> : null}
       {(recommended || []).length ? (
         <div className="card mb">
           <h2>Recommended for you</h2><p className="small muted">Ranked by alignment with your Career DNA</p>

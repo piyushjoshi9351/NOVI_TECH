@@ -17,6 +17,15 @@ const MAP_GRID = [
   ["goals", "Goals"], ["career_zones", "Career zones"], ["values", "Values"],
 ];
 
+/* Order the frozen snapshot payload the same way the profile shows DNA, so a
+   snapshot reads like a little time capsule rather than a raw JSON dump. */
+const SNAP_FIELDS = [
+  ["interests", "Interests"], ["strengths", "Strengths"], ["traits", "Traits"],
+  ["subjects", "Subjects"], ["skills", "Skills"], ["motivations", "Motivations"],
+  ["development_areas", "Want to grow in"], ["career_zones", "Career zones"],
+  ["values", "Values"], ["goals", "Goals"],
+];
+
 const DNA_ICONS = {
   interests: Sparkles,
   strengths: Zap,
@@ -27,6 +36,8 @@ const DNA_ICONS = {
 };
 
 export default function DnaPage() {
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState("");
   const [dna, setDna] = useState(null);
   const [inputs, setInputs] = useState({});
   const [error, setError] = useState(null);
@@ -67,7 +78,7 @@ export default function DnaPage() {
     try {
       const created = await api("/dna/snapshots", { method: "POST", body: JSON.stringify({ label: snapLabel || "My DNA · today", note: snapNote }) });
       setSnaps(created); setSnapLabel(""); setSnapNote("");
-      toast("Snapshot saved \u2014 this is you, right now \u2699\ufe0f");
+      toast("Snapshot saved — this is you, right now ⚙️");
     } catch (ex) { toast(ex.message); }
     finally { setSnapBusy(false); }
   };
@@ -109,10 +120,15 @@ export default function DnaPage() {
   };
 
   const refreshDna = async () => {
-    showLoader(true);
-    try { await api("/dna/refresh", { method: "POST" }); toast("DNA refreshed from your chats 🧬"); await after(() => {}); }
-    catch (ex) { toast(ex.message); }
-    finally { showLoader(false); }
+    setRefreshing(true);
+    setRefreshMessage("Reading your latest chats and updating DNA…");
+    try {
+      const updated = await api("/dna/refresh", { method: "POST" });
+      setDna(updated);
+      setInputs(Object.fromEntries(FIELDS.map(([k]) => [k, (updated[k] || []).join(", ")])));
+      setRefreshMessage("DNA updated from your latest chats.");
+    } catch (ex) { setRefreshMessage(ex.message); }
+    finally { setRefreshing(false); }
   };
 
   const reflect = async (accepted, feedback) => {
@@ -153,10 +169,11 @@ export default function DnaPage() {
         {FIELDS.map(([k, l, ph]) => field(k, l, ph))}
         <div className="row">
           <button className="btn" id="save-dna" onClick={saveDna}>Save DNA</button>
-          <button className="btn-ghost" id="refresh-dna" onClick={refreshDna}>Refresh from chats</button>
+          <button className="btn-ghost" id="refresh-dna" disabled={refreshing} onClick={refreshDna}>{refreshing ? "Refreshing…" : "Refresh from chats"}</button>
           {!dna.dna_filled ? <button className="btn-ghost" id="finalize-dna" onClick={() => { reflect(true, null); toast("DNA finalised — you're ready to match 🎯"); }}>Finalize DNA ✓</button> : <span className="chip acc">DNA locked · ready for matching</span>}
         </div>
       </div>
+      {refreshMessage && <p role="status">{refreshMessage}</p>}
       <div className="section-title">Currently mapped</div>
       <div className="cols dna-map">
         {MAP_GRID.map(([k, l]) => {
@@ -175,12 +192,12 @@ export default function DnaPage() {
       </div>
       <div className="section-title">Snapshots · your DNA over the years</div>
       <div className="card mb">
-        <p className="muted small mb">Progress is gradual \u2014 it unfolds across many years. Keep a snapshot for each big step: save it, come back and edit the label/note in later years, and delete the ones that no longer matter.</p>
+        <p className="muted small mb">Progress is gradual — it unfolds across many years. Keep a snapshot for each big step: save it, come back and edit the label/note in later years, and delete the ones that no longer matter.</p>
         {!dna.dna_filled ? null : (
           <div className="row mb">
-            <input value={snapLabel} onChange={(e) => setSnapLabel(e.target.value)} placeholder="Label, e.g. \u201CMy DNA at 14\u201D" />
+            <input value={snapLabel} onChange={(e) => setSnapLabel(e.target.value)} placeholder="Label, e.g. “My DNA at 14”" />
             <input value={snapNote} onChange={(e) => setSnapNote(e.target.value)} placeholder="A note to future you (optional)" />
-            <button className="btn" onClick={saveSnapshot} disabled={snapBusy}>Save snapshot \u2694</button>
+            <button className="btn" onClick={saveSnapshot} disabled={snapBusy}>Save snapshot ⚔</button>
           </div>
         )}
         {snaps.length === 0 ? (
@@ -193,14 +210,58 @@ export default function DnaPage() {
                 <span className="chip">{s.created_at ? new Date(s.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "now"}</span>
               </div>
               {s.note ? <p className="muted">{esc(s.note)}</p> : null}
-              {s.delta ? (
+              {s.delta && Object.values(s.delta).some((v) => v && v.length) ? (
                 <div className="dna-tag-row mt">
                   {Object.entries(s.delta).flatMap(([k, v]) => v && v.length ? v.map((item) => (
-                    <span className={"chip " + (k.endsWith("_added") ? "ac" : "warn")} key={k + item}>{esc(item)} {k.endsWith("_added") ? "\u2191" : "\u2193"}</span>
+                    <span className={"chip " + (k.endsWith("_added") ? "ac" : "warn")} key={k + item}>{esc(item)} {k.endsWith("_added") ? "↑" : "↓"}</span>
                   )) : [])}
                 </div>
               ) : null}
-              <div className="row between mt"></div>
+              {editingSnap && editingSnap.id === s.id ? (
+                /* --- inline edit: change label/note years later --- */
+                <div className="snap-edit mt">
+                  <input
+                    value={editingSnap.label}
+                    maxLength={160}
+                    placeholder="Label, e.g. “My DNA at 14”"
+                    onChange={(e) => setEditingSnap({ ...editingSnap, label: e.target.value })}
+                  />
+                  <input
+                    value={editingSnap.note}
+                    maxLength={2000}
+                    placeholder="A note to future you (optional)"
+                    onChange={(e) => setEditingSnap({ ...editingSnap, note: e.target.value })}
+                  />
+                  <div className="row">
+                    <button
+                      className="btn"
+                      onClick={() => updateSnapshot(s.id, { label: editingSnap.label, note: editingSnap.note })}
+                    >
+                      Save
+                    </button>
+                    <button className="btn-ghost" onClick={() => setEditingSnap(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="row between mt">
+                  <button className="btn-ghost" onClick={() => beginEdit(s)}>✎ Edit label / note</button>
+                  <button className="btn-ghost snap-del" onClick={() => deleteSnapshot(s.id)}>Delete</button>
+                </div>
+              )}
+              {/* what was frozen at this point in time */}
+              <details className="snap-detail">
+                <summary>What this snapshot captured</summary>
+                {SNAP_FIELDS.map(([k, label]) => (
+                  (s[k] || []).length ? (
+                    <div className="snap-detail-row" key={k}>
+                      <span className="snap-detail-label">{esc(label)}</span>
+                      <span className="snap-detail-vals">
+                        {(s[k] || []).map((v, i) => <span className="chip" key={i}>{esc(String(v))}</span>)}
+                      </span>
+                    </div>
+                  ) : null
+                ))}
+              </details>
             </div>
           ))
         )}

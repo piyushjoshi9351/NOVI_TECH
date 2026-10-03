@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -49,7 +51,12 @@ async def refresh_dna(user: User = Depends(get_current_student), db: Session = D
     conv_id, chat_history = _recent_history(user, db)
     if not chat_history:
         raise HTTPException(status_code=400, detail="Chat with Novi first so your DNA has something to learn from")
-    dna = await dna_service.refresh_dna_from_history(user, chat_history, db, conversation_id=conv_id)
+    try:
+        dna = await asyncio.wait_for(dna_service.refresh_dna_from_history(user, chat_history, db, conversation_id=conv_id), timeout=90)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="DNA refresh took too long. Please retry shortly.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return _payload(dna)
 
 
@@ -91,16 +98,57 @@ def _payload(dna) -> dict:
 
 
 def _recent_history(user: User, db: Session) -> tuple[int | None, list[dict]]:
-    from app.services.chat import list_conversations, get_chat_history
+    from sqlalchemy import select
+    from app.models.chat import Conversation, Message
+    from app.models.enums import MessageRole
+    from app.routers.onboarding import _finalize_history
 
-    convos = list_conversations(user, db)
-    if not convos:
-        return None, []
-    # Pull evidence from the student's recent conversations, newest first,
-    # so DNA reflects what Novi has actually heard across chats.
-    newest = convos[0]
-    history: list[dict] = []
-    for conv in convos[:6]:
-        for m in get_chat_history(user, conv.id, db)[-12:]:
-            history.append({**m, "conversation_id": conv.id})
-    return newest.id, history[-40:]
+    # Preserve chronology across conversations and keep the newest messages.
+    rows = list(db.scalars(
+        select(Message).join(Conversation)
+        .where(Conversation.user_id == user.id, Message.role != MessageRole.SYSTEM)
+        .order_by(Message.created_at.desc(), Message.id.desc()).limit(40)
+    ))
+    history = _finalize_history(db, user) + [
+        {"role": m.role.value, "content": m.content, "conversation_id": m.conversation_id}
+        for m in reversed(rows)
+    ]
+    return (rows[0].conversation_id if rows else None), history[-60:]
+
+
+from app.schemas.career_dna_snapshot import SnapshotCreate, SnapshotUpdate
+from app.services import career_dna_snapshot as snapshots
+
+
+def _snapshots(user, db):
+    return [{**{column.name: getattr(s, column.name) for column in s.__table__.columns},
+             "delta": getattr(s, "_snapshot_delta", None)} for s in snapshots.list_snapshots(user, db)]
+
+
+@router.get("/snapshots")
+def list_snapshots(user: User = Depends(get_current_student), db: Session = Depends(get_db)):
+    return _snapshots(user, db)
+
+
+@router.post("/snapshots")
+def save_snapshot(data: SnapshotCreate, user: User = Depends(get_current_student), db: Session = Depends(get_db)):
+    snapshots.save_snapshot(user, data, db)
+    return _snapshots(user, db)
+
+
+@router.patch("/snapshots/{snap_id}")
+def update_snapshot(snap_id: int, data: SnapshotUpdate, user: User = Depends(get_current_student), db: Session = Depends(get_db)):
+    try:
+        snapshots.update_snapshot(user, snap_id, data, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Snapshot not found") from exc
+    return _snapshots(user, db)
+
+
+@router.delete("/snapshots/{snap_id}")
+def delete_snapshot(snap_id: int, user: User = Depends(get_current_student), db: Session = Depends(get_db)):
+    try:
+        snapshots.delete_snapshot(user, snap_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Snapshot not found") from exc
+    return {"deleted": True}

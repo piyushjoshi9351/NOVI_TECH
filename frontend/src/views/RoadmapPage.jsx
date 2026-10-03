@@ -121,18 +121,24 @@ export default function RoadmapPage() {
   };
 
   const toggleTask = async (id, checked) => {
-    await api(`/roadmap/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: checked ? "done" : "active" }) });
-    reload({ msg: "Task updated ✓" });
+    try {
+      await api(`/roadmap/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: checked ? "done" : "active" }) });
+      await reload({ msg: "Task updated ✓" });
+    } catch (ex) { toast(ex.message, "err"); }
   };
 
   const togglePrio = async (id) => {
-    await api(`/roadmap/priorities/${id}`, { method: "PATCH" });
-    reload({ msg: "Priority updated ✓" });
+    try {
+      await api(`/roadmap/priorities/${id}`, { method: "PATCH" });
+      await reload({ msg: "Priority updated ✓" });
+    } catch (ex) { toast(ex.message, "err"); }
   };
 
   const toggleItem = async (id) => {
-    await api(`/roadmap/items/${id}`, { method: "PATCH" });
-    reload({ msg: "Step updated ✓" });
+    try {
+      await api(`/roadmap/items/${id}`, { method: "PATCH" });
+      await reload({ msg: "Step updated ✓" });
+    } catch (ex) { toast(ex.message, "err"); }
   };
 
   const genPriorities = async () => {

@@ -22,21 +22,19 @@ async def list_careers(
 
 @router.get("/categories")
 async def categories(db: Session = Depends(get_db)):
+    """Categories ordered by how many careers sit in them, so the client's
+    top-filter row can just take the first few. Counts are aggregated across
+    raw category spellings before normalising, otherwise the ordering splits
+    on aliases. Ties fall back to alphabetical for a stable response."""
     from sqlalchemy import select, func
     from app.db.career_catalog import normalize_category
     from app.models.career import Career
 
-    raw = list(db.scalars(select(func.distinct(Career.category))))
-    seen: set[str] = set()
-    canonical: list[str] = []
-    for cat in sorted(raw, key=lambda x: x.lower()):
+    counts: dict[str, int] = {}
+    for cat, n in db.execute(select(Career.category, func.count()).group_by(Career.category)):
         label = normalize_category(cat)
-        key = label.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        canonical.append(label)
-    return canonical
+        counts[label] = counts.get(label, 0) + n
+    return sorted(counts, key=lambda c: (-counts[c], c.lower()))
 
 
 @router.get("/matches", response_model=list[CareerMatchOut])
@@ -64,7 +62,10 @@ async def career_advice(
     career = career_service.get_career(db, slug=slug)
     if not career:
         raise HTTPException(status_code=404, detail="Career not found")
-    return await career_service.career_advice(db, user, career)
+    try:
+        return await career_service.career_advice(db, user, career)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/{slug}", response_model=CareerDetailOut)

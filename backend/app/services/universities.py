@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from sqlalchemy import select
@@ -28,6 +29,13 @@ def search_universities(db: Session, filters: UniversityFilters) -> list[Univers
         )
     if filters.country:
         stmt = stmt.where(University.country == filters.country)
+    if filters.course:
+        stmt = stmt.where(
+            University.course.ilike(f"%{filters.course.strip()}%")
+            | University.courses.contains(filters.course.strip())
+        )
+    if filters.entry_query:
+        stmt = stmt.where(University.entry_requirements.ilike(f"%{filters.entry_query.strip()}%"))
     if filters.subject:
         subject = filters.subject.strip().lower()
         stmt = stmt.where(
@@ -207,15 +215,15 @@ def recommend(db: Session, user: User, limit: int = 6) -> list[dict]:
 
     dest_key = (ctx.get("country_preference") or "").strip()
     dream = (ctx.get("dream_universities") or "").strip().lower()
-    career = career_in_mind_phrase(ctx)
+    career = " ".join((dna.career_zones or []) if dna else [])
     career_toks = _tok(career) if career else set()
-    subjects_ctx = [str(s).strip().lower() for s in (ctx.get("subjects_enjoyed") or []) if str(s).strip()]
+    subjects_ctx = [str(s).strip().lower() for s in ((dna.subjects or []) if dna else []) if str(s).strip()]
 
-    catalog = list(db.scalars(select(University).order_by(University.ranking.asc()).limit(80)))
+    catalog = list(db.scalars(select(University).order_by(University.ranking.asc())))
     scored: list[dict] = []
     for uni in catalog:
         hay = " ".join(
-            [uni.course or "", uni.subject or "", " ".join(uni.strengths or []), uni.about or ""]
+            [uni.course or "", uni.subject or "", " ".join(uni.courses or []), " ".join(uni.strengths or []), uni.about or ""]
         ).lower()
         hay_toks = _tok(hay)
         alignment = 0
@@ -223,7 +231,8 @@ def recommend(db: Session, user: User, limit: int = 6) -> list[dict]:
         for field, arr in buckets.items():
             for phrase in arr:
                 p = phrase.lower()
-                if p in hay:
+                from app.services.careers import _contains
+                if _contains(p, hay):
                     alignment += weights[field]
                     if best_field is None or weights[field] > weights.get(best_field, 0):
                         best_field, best_phrase = field, phrase
@@ -243,7 +252,7 @@ def recommend(db: Session, user: User, limit: int = 6) -> list[dict]:
                 alignment += 3
                 reasons_extra.append(f"{subject.title()} is one of the subjects you enjoy.")
                 break
-        if career_toks and career_toks & hay_toks:
+        if career_toks and career_toks <= hay_toks:
             alignment += 6
             reasons_extra.append(f"Programs here connect to {career}, which you have in mind.")
         if dream and uni.name.lower() in dream:
@@ -403,17 +412,16 @@ async def advice(
     fallback = _advice_fallback(question, profile, dna)
 
     try:
-        result = await gemini.complete_grounded(
+        result = await asyncio.wait_for(gemini.primary.complete_grounded(
             prompts.university_advice_prompt(question, payload, dna_dict(dna), student),
             system=prompts.UNIVERSITY_ADVICE_SYSTEM,
-        )
+        ), timeout=75)
         answer = (result.get("text") or "").strip()
         if not answer:
             raise ValueError("empty answer")
         sources = result.get("sources") or []
     except Exception as exc:
-        print(f"[universities] advice LLM failed, using heuristic: {exc}")
-        answer, sources = fallback, []
+        raise ValueError("Gemini university advice is unavailable. The Gemini API may have reached its request quota. Check its quota or retry when capacity is available.") from exc
 
     memory.archive(
         user,

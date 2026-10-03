@@ -84,3 +84,10 @@ async def change_password(
 ):
     auth_service.change_password(user, data.current_password, data.new_password, db)
     return {"status": "ok", "detail": "Password updated"}
+
+@router.get('/links')
+def links(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return {
+        'parents': [{'id': link.parent.id, 'name': link.parent.display_name, 'email': link.parent.email} for link in user.linked_parents],
+        'students': [{'id': link.student.id, 'name': link.student.display_name, 'email': link.student.email} for link in user.linked_children],
+    }

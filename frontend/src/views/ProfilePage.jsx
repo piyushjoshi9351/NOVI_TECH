@@ -146,7 +146,7 @@ export default function ProfilePage() {
     if (nw !== cf) { toast("New passwords don't match", "err"); return; }
     showLoader(true);
     try {
-      await api("/auth/password", { method: "POST", body: JSON.stringify({ current_password: cur, new_password: nw }) });
+      await api("/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: cur, new_password: nw }) });
       ["#ps-curpw", "#ps-newpw", "#ps-confpw"].forEach((s) => { const el = document.querySelector(s); if (el) el.value = ""; });
       toast("Password updated 🔒");
     } catch (ex) { toast(ex.message, "err"); }

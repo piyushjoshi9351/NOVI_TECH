@@ -5,6 +5,7 @@ import { ArrowRight, Check, Compass, GraduationCap, MessageCircle, ShieldCheck, 
 import { api, bellTime, esc, ringColor } from "../api";
 import { useAuth } from "../auth";
 import { Bar, EmptyState, showLoader, toast } from "../ui";
+import ContributionHeatmap from "./checkin/ContributionHeatmap";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -110,6 +111,19 @@ export default function DashboardPage() {
             <span className="chip-soft">{grade}</span>
             <span className={`pill ${dirTone}`}>{dir}</span>
           </div>
+          {/* Profile photo / headline / About, sourced from the same Passport profile. */}
+          {user?.profile_photo || user?.headline || user?.about_me ? (
+            <div className="dash-prof">
+              {user.profile_photo ? (
+                <img className="dash-prof-img" src={user.profile_photo} alt="" />
+              ) : null}
+              <div className="dash-prof-txt">
+                {user.headline ? <div className="dash-prof-head">{esc(user.headline)}</div> : null}
+                {user.location ? <div className="dash-prof-loc">📍 {esc(user.location)}</div> : null}
+                {user.about_me ? <p className="dash-prof-about">{esc(user.about_me)}</p> : null}
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="dash-tools">
           <button className="btn-ghost" onClick={go("chat")}><MessageCircle size={16} /> Ask Novi</button>
@@ -186,6 +200,11 @@ export default function DashboardPage() {
               </>
             )
             : <p className="small mt">Nothing is scheduled for today — add your first focus block.</p>}
+        </section>
+
+        <section className="card dash-panel">
+          {/* Dashboard shows a 3-month glance; Checkin keeps the 6-month default. */}
+          <ContributionHeatmap weeks={13} />
         </section>
 
         <section className="card dash-panel">

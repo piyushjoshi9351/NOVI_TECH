@@ -71,8 +71,8 @@ def test_refresh_from_chat_extracts_and_dedupes(db, user, monkeypatch):
         "complete_json",
         _mock_json_return({
             "items": [
-                {"category": "projects", "title": "Weather app", "description": "Built with python", "skills": ["python"]},
-                {"category": "competitions", "title": "District science fair", "description": "Won first place", "date_achieved": "2024-03"},
+                    {"category": "projects", "title": "Weather app", "description": "Built with python", "skills": ["python"], "evidence": "I built a weather app with python"},
+                    {"category": "competitions", "title": "District science fair", "description": "Won first place", "date_achieved": "2024-03", "evidence": "I won a district science fair"},
             ]
         }),
     )
@@ -91,3 +91,21 @@ def test_refresh_from_chat_requires_conversation_depth(db, user):
     result = asyncio.run(ps.refresh_from_chat(db, user))
     assert result["added"] == 0
     assert result["total"] == 0
+
+
+def test_refresh_rejects_unsupported_ai_claims_from_one_message(db, user, monkeypatch):
+    conv = Conversation(user_id=user.id, title="A win")
+    db.add(conv)
+    db.commit()
+    _chat_message(db, user, conv, MessageRole.USER, "I built a small weather app in Python")
+    monkeypatch.setattr(ps.gemini, "complete_json", _mock_json_return({"items": [
+        {"category": "projects", "title": "Weather app", "evidence": "I built a small weather app in Python", "skills": ["Python", "React"]},
+        {"category": "competitions", "title": "Science olympiad", "evidence": "I won a science olympiad"},
+    ]}))
+
+    result = asyncio.run(ps.refresh_from_chat(db, user))
+    assert result["added"] == 1
+    assert result["skipped"] == 1
+    item = ps.list_items(db, user)[0]
+    assert item.description == "I built a small weather app in Python"
+    assert item.skills == ["Python"]

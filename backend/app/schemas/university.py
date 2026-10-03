@@ -61,6 +61,8 @@ class AdviceRequest(BaseModel):
 
 class UniversityFilters(BaseModel):
     q: str | None = None
+    course: str | None = None
+    entry_query: str | None = None
     country: str | None = None
     subject: str | None = None
     min_rank: int | None = Field(default=None, ge=1)

@@ -45,6 +45,7 @@ class ContributionCell(BaseModel):
 class ContributionWeek(BaseModel):
     week_start: date
     days: list[ContributionCell]
+    weekly_done: bool = False   # weekly reflection submitted for this week
 
 
 class ContributionStats(BaseModel):

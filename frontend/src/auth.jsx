@@ -50,9 +50,11 @@ export function AuthProvider({ children }) {
     setUser(u);
   };
 
-  const refreshUser = async () => {
+  const refreshUser = async (opts = {}) => {
     try {
-      const me = await api("/auth/me");
+      // opts.fresh is required right after a write, otherwise the 15s GET
+      // cache can hand back the pre-write profile.
+      const me = await api("/auth/me", opts);
       if (me) {
         localStorage.setItem("novi_user", JSON.stringify(me));
         setUser(me);

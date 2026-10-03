@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
-VENV_DIR="$ROOT_DIR/venv"
+VENV_DIR="$BACKEND_DIR/venv"
 ROOT_ENV="$ROOT_DIR/.env"
 BACKEND_ENV="$BACKEND_DIR/.env"
 
@@ -26,6 +26,14 @@ err()  { printf "${C_RED}[ERROR]${C_RST} %s\n" "$*" >&2; }
 die()  { err "$*"; exit 1; }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  else
+    docker-compose "$@"
+  fi
+}
 
 venv_python() {
   if [ -x "$VENV_DIR/bin/python" ]; then
@@ -160,11 +168,23 @@ ensure_envs() {
 
 start_services() {
   if [ "$SKIP_DOCKER" -eq 1 ]; then return; fi
-  log "Starting Docker services (Letta, Letta Postgres, Redis)..."
-  (cd "$ROOT_DIR" && docker-compose up -d)
+  local services=(postgres redis letta)
+  local start_mysql=1
+  if port_open localhost 3306; then
+    start_mysql=0
+    warn "Port 3306 is already in use; using the existing MySQL service."
+  else
+    services=(mysql "${services[@]}")
+  fi
+
+  log "Starting Docker infrastructure (${services[*]})..."
+  (cd "$ROOT_DIR" && compose up -d "${services[@]}")
   wait_port localhost 8283 "Letta server"
   wait_port localhost 5432 "Letta Postgres"
   wait_port localhost 6379 "Redis"
+  if [ "$start_mysql" -eq 1 ]; then
+    wait_port localhost 3306 "MySQL"
+  fi
 }
 
 check_mysql() {

@@ -7,6 +7,7 @@ Chat flow:
 """
 
 from collections import defaultdict
+import asyncio
 import time
 from typing import Iterable, Optional
 
@@ -362,7 +363,7 @@ class NoviMemory:
             new_value = (await self.gemini.complete(prompt, system="")).strip()
             if not new_value or new_value == current:
                 return False
-            return self.letta.update_memory_block(agent_id, "human", new_value)
+            return await asyncio.to_thread(self.letta.update_memory_block, agent_id, "human", new_value)
         except Exception as exc:
             print(f"[memory] profile update failed: {exc}")
             return False
@@ -388,7 +389,7 @@ class NoviMemory:
             for fact in facts[:5]:
                 if not isinstance(fact, str) or not fact.strip():
                     continue
-                if self.letta.insert_archival(agent_id, fact.strip(), tags=["student", sy_tag(), tag]):
+                if await asyncio.to_thread(self.letta.insert_archival, agent_id, fact.strip(), tags=["student", sy_tag(), tag]):
                     inserted += 1
             return inserted
         except Exception as exc:

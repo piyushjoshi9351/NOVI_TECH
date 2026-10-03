@@ -19,7 +19,7 @@ _NEGATION_RE = re.compile(
 )
 # "AI is not for me" / "AI isn't for me" — subject comes BEFORE the signal.
 _BEFORE_NEGATION_RE = re.compile(
-    r"\b([a-z][a-z0-9 &+.+-]{1,24}?)\s+(?:is|was|seems|feels)\s+(?:not\s+)?(?:for\s+me|my\s+thing|my\s+jam|my\s+vibe)\b",
+    r"\b([a-z][a-z0-9 &+.+-]{1,24}?)\s+(?:is|was|seems|feels)\s+(?:not\s+)(?:for\s+me|my\s+thing|my\s+jam|my\s+vibe)\b",
     re.I,
 )
 _PREFER_OVER_RE = re.compile(
@@ -137,42 +137,19 @@ async def refresh_dna_from_history(
             prompts.career_dna_prompt(chat_history, current, student),
             system=prompts.CAREER_DNA_SYSTEM,
         )
-        if not isinstance(result, dict):
+        if not isinstance(result, dict) or not any(k in result for k in PREFERENCE_FIELDS):
             raise ValueError("bad shape")
     except Exception as exc:
-        print(f"[dna] refresh skipped: {exc}")
-        # Even without the LLM, rebuild the evidence panel deterministically
-        # from what's already on record so the UI stays honest & populated.
-        cleaned = {field: _clean_list(current.get(field)) for field in PREFERENCE_FIELDS}
-        _anchor_context(ctx, cleaned)
-        cleaned["strengths"] = _clean_list(dna.strengths) + _clean_list(ctx.get("strengths"))
-        if revoked:
-            dna.excluded = _merge_excluded(dna.excluded, revoked)
-            for field in PREFERENCE_FIELDS:
-                cleaned[field] = prune(cleaned[field], revoked)
-            cleaned["strengths"] = prune(cleaned["strengths"], revoked)
-        dna.interests = cleaned["interests"]
-        dna.subjects = cleaned["subjects"]
-        dna.skills = cleaned["skills"]
-        dna.career_zones = cleaned["career_zones"]
-        dna.goals = cleaned["goals"]
-        dna.motivations = cleaned["motivations"]
-        dna.values = cleaned["values"]
-        dna.strengths = cleaned["strengths"]
-        dna.sources = build_dna_sources(cleaned, chat_history, conversation_id)
-        _populated_filled(cleaned, dna)
-        db.commit()
-        _rescore_on_dna_change(user, db)
-        return dna
+        raise ValueError("DNA could not be refreshed because the AI service failed. Your saved DNA has been preserved. Please retry.") from exc
 
     # Deterministic backstop: drop anything the student clearly revoked, even if the LLM
     # forgot to (e.g. "I don't like coding anymore" must remove coding, not keep it).
     cleaned = {field: _clean_list(result.get(field, current.get(field))) for field in PREFERENCE_FIELDS}
+    _anchor_context(ctx, cleaned)
     if revoked:
         dna.excluded = _merge_excluded(dna.excluded, revoked)
         for field in PREFERENCE_FIELDS:
             cleaned[field] = prune(cleaned[field], revoked)
-    _anchor_context(ctx, cleaned)
 
     update = CareerDNAUpdate(
         traits=_clean_list(result.get("traits", current.get("traits"))),
@@ -188,11 +165,16 @@ async def refresh_dna_from_history(
         novi_reflection=str(result.get("novi_reflection") or ""),
         dna_filled=True,
     )
-    new_dna = update_dna(user, update, db)
+    apply_dna_fields(dna, update)
+    db.commit()
+    db.refresh(dna)
+    new_dna = dna
+    _rescore_on_dna_change(user, db)
     new_dna.sources = build_dna_sources(cleaned, chat_history, conversation_id)
     db.commit()
     db.refresh(new_dna)
-    _archive_shift(user, current, new_dna)
+    # Memory synchronization must not hold the refresh response open.
+    # Chat synchronizes the persisted DNA on its next turn.
     return new_dna
 
 
@@ -278,7 +260,7 @@ async def build_dna_from_text(user: User, text: str, db: Session) -> CareerDNA:
             prompts.dna_from_text_prompt(text, current, student),
             system=prompts.CAREER_DNA_SYSTEM,
         )
-        if not isinstance(result, dict):
+        if not isinstance(result, dict) or not any(k in result for k in PREFERENCE_FIELDS):
             raise ValueError("bad shape")
     except Exception as exc:
         print(f"[dna] magic build failed: {exc}")
@@ -300,13 +282,18 @@ async def build_dna_from_text(user: User, text: str, db: Session) -> CareerDNA:
         novi_reflection=str(result.get("novi_reflection") or ""),
         dna_filled=True,
     )
-    new_dna = update_dna(user, update, db)
+    apply_dna_fields(dna, update)
+    db.commit()
+    db.refresh(dna)
+    new_dna = dna
+    _rescore_on_dna_change(user, db)
     new_dna.sources = build_dna_sources(
         cleaned, [{"role": "user", "content": text}], conversation_id=None
     )
     db.commit()
     db.refresh(new_dna)
-    _archive_shift(user, current, new_dna)
+    # Memory synchronization must not hold the refresh response open.
+    # Chat synchronizes the persisted DNA on its next turn.
     return new_dna
 
 

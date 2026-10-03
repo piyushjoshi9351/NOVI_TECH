@@ -1,4 +1,5 @@
 import re
+import asyncio
 from difflib import SequenceMatcher
 
 from sqlalchemy import select
@@ -104,7 +105,8 @@ def _norm(*parts) -> str:
 
 def _tokens(text: str) -> set[str]:
     """Significant lowercase tokens (drops 1-letter and pure number tokens)."""
-    return {t for t in _SLUG_RE.split(text.lower()) if len(t) > 1 and not t.isdigit()}
+    stop = {"to", "in", "of", "and", "the", "be", "want", "become", "my", "is", "for", "with", "an", "as", "it", "career", "work"}
+    return {t for t in _SLUG_RE.split(text.lower()) if len(t) > 1 and not t.isdigit() and t not in stop}
 
 
 def _career_text(c: Career) -> str:
@@ -130,13 +132,13 @@ def _contains(item: str, blob: str) -> bool:
     key = _SLUG_RE.sub(" ", item).strip()
     if not key:
         return False
-    if key in blob:
+    if re.search(r"\b" + re.escape(key) + r"\b", blob):
         return True
     it_tokens = _tokens(key)
     if not it_tokens:
         return False
     blob_tokens = _tokens(blob)
-    return bool(it_tokens & blob_tokens)
+    return bool(it_tokens) and it_tokens <= blob_tokens
 
 
 _REASON_TEMPLATES = {
@@ -174,10 +176,10 @@ def _career_matches_excluded(c: Career, excluded: list | None) -> list[str]:
         key = _SLUG_RE.sub(" ", needle).strip()
         if not key:
             return False
-        if key in haystack:
+        if re.search(r"\b" + re.escape(key) + r"\b", haystack):
             return True
         nt = _tokens(key)
-        return bool(nt and nt & _tokens(haystack))
+        return bool(nt and nt <= _tokens(haystack))
 
     suppressed = []
     for phrase in excluded:
@@ -222,7 +224,7 @@ def _score_career(c: Career, dna) -> tuple[float, list[str]]:
             topic = str(ph).strip().lower()
             reasons.append(f"You told Novi you're stepping away from {topic or 'this'} — so this career is not in the running.")
         # Hard cap: revoked-topic careers can't beat an honest 30% floor.
-        score = min(score, 28.0)
+        score = 0.0
 
     return score, reasons[:4]
 
@@ -238,7 +240,7 @@ def _score_catalog(db: Session, dna, ctx: dict | None = None) -> list[dict]:
     # The student's self-declared career is the single strongest signal we have:
     # any catalog career that matches its name/category gets a hard boost so the
     # stated goal can never lose to a vague preference overlap.
-    career = career_in_mind_phrase(ctx) if ctx else None
+    career = " ".join(getattr(dna, "career_zones", None) or [])
     if career:
         want = _tokens(career)
         for item in scored:
@@ -246,7 +248,7 @@ def _score_catalog(db: Session, dna, ctx: dict | None = None) -> list[dict]:
             if not c:
                 continue
             both = want & _tokens(_norm(c.title, c.category))
-            if both:
+            if want and want <= _tokens(_norm(c.title, c.category)) and not _career_matches_excluded(c, getattr(dna, "excluded", [])):
                 item["score"] = min(98.0, item["score"] + 20.0)
                 item["reasons"] = (
                     item["reasons"]
@@ -296,13 +298,6 @@ def rescore_matches(db: Session, user: User, limit: int = 1) -> list[CareerMatch
     ctx = load_student_context(db, user)
     scored = _score_catalog(db, dna, ctx)
     stored = _store_matches(db, user, scored, limit)
-    if stored:
-        memory.archive(
-            user,
-            f"User's top career match updated to {stored[0].career.title} "
-            f"(fit {round(stored[0].score)}%).",
-            ("career", "match"),
-        )
     return stored
 
 
@@ -311,49 +306,8 @@ async def match_careers(db: Session, user: User, request: CareerMatchRequest) ->
     ctx = load_student_context(db, user)
     scored = _score_catalog(db, dna, ctx)
 
-    # 2) Gemini may only *refine* the top candidates' reasons — the ordering
-    #    and scores always stay deterministic and logical.
-    top_n = [s["slug"] for s in scored[:10]]
-    catalog = search_careers(db, limit=500)
-    top_details = [
-        {
-            "slug": c.slug,
-            "title": c.title,
-            "category": c.category,
-            "summary": (c.summary or "")[:220],
-            "skills": c.skills or [],
-            "subjects": c.subjects or [],
-            "industries": c.industries or [],
-        }
-        for c in catalog
-        if c.slug in top_n
-    ]
-    if top_details:
-        try:
-            result = await gemini.complete_json(
-                prompts.career_match_prompt(top_details, dna_dict(dna), request.focus),
-                system=prompts.CAREER_MATCH_SYSTEM,
-            )
-            if isinstance(result, dict) and isinstance(result.get("matches"), list):
-                llm_reasons = {m["slug"]: m.get("reasons") for m in result["matches"] if isinstance(m, dict)}
-                for item in scored:
-                    extra = llm_reasons.get(item["slug"])
-                    if isinstance(extra, list) and extra:
-                        item["reasons"] = [str(r) for r in extra][:4]
-        except Exception as exc:
-            print(f"[careers] LLM reason refinement skipped: {exc}")
-
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    stored = _store_matches(db, user, scored, request.limit)
-
-    if stored:
-        memory.archive(
-            user,
-            f"User discovered a strong career match: {stored[0].career.title} "
-            f"(fit {round(stored[0].score)}%).",
-            ("career", "match"),
-        )
-    return stored
+    # Ranking explanations come directly from matched profile evidence.
+    return _store_matches(db, user, scored, request.limit)
 
 
 # ---------------------------------------------------------------------------
@@ -363,14 +317,8 @@ async def match_careers(db: Session, user: User, request: CareerMatchRequest) ->
 ADVICE_TYPES = {"project", "skill", "explore"}
 ADVICE_LINKS = {"passport", "careers", "universities", "roadmap"}
 
-_advice_cache: dict[tuple[int, int], dict] = {}
-
-
 async def career_advice(db: Session, user: User, career: Career) -> dict:
     """Personalized 'why this fits you' + concrete next steps for a career."""
-    key = (user.id, career.id)
-    if key in _advice_cache:
-        return dict(_advice_cache[key])
 
     from app.services import passport as passport_svc
 
@@ -401,7 +349,7 @@ async def career_advice(db: Session, user: User, career: Career) -> dict:
 
     fit_statement, next_steps = None, None
     try:
-        result = await gemini.complete_json(
+        result = await asyncio.wait_for(gemini.primary.complete_json(
             prompts.career_advice_prompt(
                 {
                     "slug": career.slug, "title": career.title, "category": career.category,
@@ -411,17 +359,15 @@ async def career_advice(db: Session, user: User, career: Career) -> dict:
                 dna_dict(dna), student, roadmap_items, passport_counts,
             ),
             system=prompts.CAREER_ADVICE_SYSTEM,
-        )
+        ), timeout=75)
         if isinstance(result, dict):
             fit_statement = str(result.get("fit_statement") or "").strip() or None
             next_steps = _clean_steps(result.get("next_steps"))
     except Exception as exc:
-        print(f"[careers] advice LLM failed, using heuristic: {exc}")
+        raise ValueError("Gemini advice is unavailable. The Gemini API may have reached its request quota. Check its quota or retry when capacity is available.") from exc
 
     if not next_steps or not fit_statement:
-        hfit, hsteps = _heuristic_advice(career, dna, roadmap_items)
-        next_steps = next_steps or hsteps
-        fit_statement = fit_statement or hfit
+        raise ValueError("Gemini returned incomplete advice. Please retry.")
 
     match = db.scalar(
         select(CareerMatch).where(
@@ -435,8 +381,7 @@ async def career_advice(db: Session, user: User, career: Career) -> dict:
         "fit_statement": fit_statement,
         "next_steps": next_steps[:3],
     }
-    _advice_cache[key] = result
-    return dict(result)
+    return result
 
 
 def _clean_steps(value) -> list[dict]:

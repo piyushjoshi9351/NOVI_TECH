@@ -36,22 +36,29 @@ function _revalidate(path, opts, key) {
   p.finally(() => { if (_apiInflight.get(key) === p) _apiInflight.delete(key); });
 }
 
+/* opts.fresh forces a real network read, bypassing the warm cache. Explicit
+   refresh buttons need it: without it they'd re-read their own cached GET and
+   look like they did nothing. */
 export async function api(path, opts = {}) {
   const method = (opts.method || "GET").toUpperCase();
+  const fresh = !!opts.fresh;
   const key = method + " " + path;
 
   if (method !== "GET") {
     clearApiCache(); // a change happened — reads must refetch
+  } else if (fresh) {
+    _apiCache.delete(key);
   } else {
     const hit = _apiCache.get(key);
     if (hit && Date.now() - hit.ts < API_TTL) return hit.data;   // warm: instant
-    if (hit) { _revalidate(path, opts, key); return hit.data; }  // stale: instant + refresh behind
+    // Expired reads must return the newly fetched value to the caller.  // stale: instant + refresh behind
     if (_apiInflight.has(key)) return _apiInflight.get(key);     // dedupe parallel calls
   }
 
   const gen = _apiGen;
+  const { fresh: _ignored, ...fetchOpts } = opts;
   const run = async () => {
-    const res = await fetch(API + path, { ...opts, headers: _headers() });
+    const res = await fetch(API + path, { ...fetchOpts, signal: opts.signal || AbortSignal.timeout(110000), headers: _headers() });
     let data = null;
     try { data = await res.json(); } catch (_) {}
     if (!res.ok) {
@@ -70,6 +77,7 @@ export async function api(path, opts = {}) {
       throw err;
     }
     if (method === "GET" && gen === _apiGen) _apiCache.set(key, { data, ts: Date.now() });
+    if (method !== "GET") clearApiCache();
     return data;
   };
 
@@ -126,7 +134,10 @@ export async function streamChat({ message, conversation_id = null, signal, onEv
 }
 
 /* ------------------------------------------------------------------ helpers */
-export function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+/* React escapes text children and attribute values for us, so this must NOT
+   pre-escape to HTML entities. Doing so rendered entities literally (a real
+   apostrophe showed up as the text "&#39;"). It only normalises to a string. */
+export function esc(s) { return String(s ?? ""); }
 
 export const MOODS = { great: "😄", good: "🙂", okay: "😕", low: "😞" };
 export const moodIcon = (m) => MOODS[m] || "🙂";
@@ -170,7 +181,7 @@ const ROUTE_WARM = {
   universities: ["/universities?limit=30", "/universities/filters", "/universities/recommended", "/dna/context"],
   roadmap: ["/roadmap/tasks", "/roadmap/goals", "/roadmap/priorities", "/roadmap", "/dna/context"],
   passport: ["/passport", "/passport/completion", "/dna/context"],
-  checkin: ["/checkins/current", "/checkins", "/checkins/planner/day", "/dna/context"],
+  checkin: ["/checkins/current", "/checkins", "/checkins/graph", "/checkins/planner/day", "/dna/context"],
   overview: ["/parents/dashboard"],
   parent: ["/parent/students"],
   profile: ["/auth/me", "/dna", "/auth/links"],

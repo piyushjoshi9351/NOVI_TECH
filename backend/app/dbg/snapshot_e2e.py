@@ -9,7 +9,7 @@ import json
 import urllib.error
 import urllib.request
 
-BASE = "http://127.0.0.1:8800"
+BASE = "http://127.0.0.1:8000/api/v1"
 TOKEN = None
 
 
@@ -17,7 +17,7 @@ def call(method, path, body=None, token=None, expect=200):
     req = urllib.request.Request(BASE + path, method=method)
     req.add_header("Content-Type", "application/json")
     if token:
-        req.add_header("Authorization", "Bearer " + token)
+        req.add_header("Authorization", f"Bearer {token}")
     data = json.dumps(body).encode() if body is not None else None
     try:
         resp = urllib.request.urlopen(req, data)
@@ -49,9 +49,8 @@ def main():
     email = f"snap_{os.urandom(4).hex()}@novi.app"
     reg = call(
         "POST",
-        "/api/auth/register",
+        "/auth/signup",
         {"email": email, "password": "Snapshot!42", "name": "DNA Snapshot QA", "role": "student"},
-        201,
     )
     TOKEN = reg.get("token") or reg.get("access_token") or (reg.get("user") or {}).get("token")
     assert TOKEN, f"no token in register: {reg}"
@@ -59,7 +58,7 @@ def main():
     # --- step 1: tell Novi a bit (magic) so DNA gets real content ---
     magic = call(
         "POST",
-        "/api/dna/magic",
+        "/dna/magic",
         {
             "text": "I'm age 14. I love building robots, I'm strong at coding and "
             "chemistry, I want to design things that help people, and I'm curious "
@@ -71,16 +70,16 @@ def main():
 
     snap_label1 = call(
         "POST",
-        "/api/dna/snapshots",
+        "/dna/snapshots",
         {"label": "My DNA at 14", "note": "The curious kid who loves robots"},
-        token=TOKEN, expect=201,
-    )
+        token=TOKEN,
+    )[-1]  # the API returns the full timeline; the new one is the newest
     snap1 = snap_label1
 
     # --- step 3: years pass; DNA drifts (magic again -> adds new interests) ---
     magic2 = call(
         "POST",
-        "/api/dna/magic",
+        "/dna/magic",
         {
             "text": "Age 19 now. Programming is my thing, data science and machine "
             "learning excite me, I work on public speaking and I'm aiming toward a "
@@ -93,13 +92,13 @@ def main():
     # --- step 4: save the second snapshot (the "gradual progress" step) ---
     snap2 = call(
         "POST",
-        "/api/dna/snapshots",
+        "/dna/snapshots",
         {"label": "My DNA at 19", "note": "The data-driven young adult"},
-        token=TOKEN, expect=201,
-    )
+        token=TOKEN,
+    )[-1]  # the API returns the full timeline; the new one is the newest
 
     # --- step 5: list -> verify delta shows exactly the gradual changes ---
-    snaps = call("GET", "/api/dna/snapshots", token=TOKEN)
+    snaps = call("GET", "/dna/snapshots", token=TOKEN)
     assert len(snaps) == 2, f"expected 2 snapshots, got {len(snaps)}: {snaps}"
     newest = next((s for s in snaps if s.get("id") == snap2.get("id")), None)
     delta = newest.get("delta") or {}
@@ -116,7 +115,7 @@ def main():
     # --- step 6: edit label+note years later (update) ---
     patched = call(
         "PATCH",
-        f"/api/dna/snapshots/{snap1['id']}",
+        f"/dna/snapshots/{snap1['id']}",
         {"label": "My DNA at 14 (retro workshop)", "note": "revisited before uni"},
         token=TOKEN,
     )
@@ -124,8 +123,8 @@ def main():
     assert me and me.get("label") == "My DNA at 14 (retro workshop)", f"update: {me}"
 
     # --- step 7: delete the stale one (timeline stays clean for years) ---
-    call("DELETE", f"/api/dna/snapshots/{snap1['id']}", token=TOKEN, expect=204)
-    after = call("GET", "/api/dna/snapshots", token=TOKEN)
+    call("DELETE", f"/dna/snapshots/{snap1['id']}", token=TOKEN, expect=200)
+    after = call("GET", "/dna/snapshots", token=TOKEN)
     assert len(after) == 1, f"delete left {after}"
 
     print("\n[PASS] snapshot save / list / delta / update / delete all green")
