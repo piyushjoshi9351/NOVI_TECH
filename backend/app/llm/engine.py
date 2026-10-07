@@ -19,10 +19,10 @@ from app.llm.gemini import GeminiProvider
 class OllamaProvider:
     """Local (or LAN) Ollama provider, OpenAI-compatible."""
 
-def __init__(self, base_url: str | None = None, model: str | None = None):
-    self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
-    self.model = model or settings.OLLAMA_MODEL
-    self.api_key = settings.OLLAMA_API_KEY
+    def __init__(self, base_url: str | None = None, model: str | None = None):
+        self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
+        self.model = model or settings.OLLAMA_MODEL
+        self.api_key = settings.OLLAMA_API_KEY
 
     async def complete(self, prompt: str, system: str | None = None) -> str:
         messages = []
