@@ -19,9 +19,10 @@ from app.llm.gemini import GeminiProvider
 class OllamaProvider:
     """Local (or LAN) Ollama provider, OpenAI-compatible."""
 
-    def __init__(self, base_url: str | None = None, model: str | None = None):
-        self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
-        self.model = model or settings.OLLAMA_MODEL
+def __init__(self, base_url: str | None = None, model: str | None = None):
+    self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
+    self.model = model or settings.OLLAMA_MODEL
+    self.api_key = settings.OLLAMA_API_KEY
 
     async def complete(self, prompt: str, system: str | None = None) -> str:
         messages = []
@@ -32,6 +33,7 @@ class OllamaProvider:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(
                     f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                     json={"model": self.model, "messages": messages, "temperature": 0.4},
                 )
                 resp.raise_for_status()
@@ -51,6 +53,7 @@ class OllamaProvider:
             async with httpx.AsyncClient(timeout=240.0) as client:
                 resp = await client.post(
                     f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                     json={
                         "model": self.model,
                         "messages": messages,

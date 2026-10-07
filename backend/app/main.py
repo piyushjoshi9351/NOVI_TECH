@@ -23,6 +23,8 @@ async def lifespan(_app: FastAPI):
     from app.db.run_migrations import check_critical_columns, run_migrations
 
     Base.metadata.create_all(bind=engine)
+    from app.m3.db.models import Base as M3Base
+    M3Base.metadata.create_all(bind=engine)
     run_migrations()
     check_critical_columns()
 

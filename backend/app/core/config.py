@@ -51,8 +51,9 @@ class Settings(BaseSettings):
     GEMINI_TIMEOUT_SECONDS: float = 60.0
 
     # --- Local LLM fallback (keeps every AI feature working when Gemini is out of quota) ---
-    OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
+    OLLAMA_BASE_URL: str = "https://ollama.com/v1"
     OLLAMA_MODEL: str = "llama3.2:3b"
+    OLLAMA_API_KEY: str = ""
 
     # --- Letta memory (optional; falls back to Gemini-only when unreachable) ---
     LETTA_BASE_URL: str = "http://localhost:8283"

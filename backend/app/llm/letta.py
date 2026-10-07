@@ -324,8 +324,13 @@ class LettaClient:
             return None
         try:
             with httpx.Client(timeout=LettaClient._EMBED_TIMEOUT) as client:
+                headers = {}
+                if settings.OLLAMA_API_KEY:
+                    headers["Authorization"] = f"Bearer {settings.OLLAMA_API_KEY}"
+
                 resp = client.post(
                     LettaClient._ollama_embeddings_url(),
+                    headers=headers,
                     json={"model": "nomic-embed-text", "prompt": text[:1200]},
                 )
                 if resp.status_code != 200:
