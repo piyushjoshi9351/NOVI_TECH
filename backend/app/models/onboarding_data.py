@@ -28,6 +28,7 @@ class OnboardingAnswer(Base):
     step_id: Mapped[str] = mapped_column(String(50), nullable=False)
     raw_value: Mapped[dict] = mapped_column(JSON, nullable=False)
     reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

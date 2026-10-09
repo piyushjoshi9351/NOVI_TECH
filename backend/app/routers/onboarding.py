@@ -329,7 +329,7 @@ async def _generate_empathy(
         name = _student_first_name(user, profile) or "my friend"
         prompt = _EMPATHY_INSTRUCT.format(
             name=name,
-            question=step.get("question", ""),
+            question=_question_for(step, profile),
             answer=_display_value(value),
         )
         reply = await asyncio.wait_for(
@@ -452,6 +452,93 @@ def _current_step(user: User) -> dict | None:
     return step
 
 
+# ---------------------------------------------------------------------------
+# Adaptive flow: questions are re-sequenced and reworded from earlier answers.
+# ``ONBOARDING_STEPS`` stays the pool of all known questions; per student, the
+# unanswered pool is filtered by skip rules and the next question is chosen from
+# it. The personalised wording for the *current* step is derived from the
+# profile so far and persisted on the answer row (so the transcript and history
+# replay the exact prompt that was shown).
+# ---------------------------------------------------------------------------
+
+
+def _skip_reason(profile: StudentProfile | None, step: dict, answered_ids: set[str]) -> str | None:
+    """Return why ``step`` is unreachable for this student, or None if it stays."""
+    if step["id"] == "hard_subjects":
+        # A student who enjoyed no subjects (or skipped the question entirely)
+        # shouldn't be asked which ones feel hard — that would be re-asking the
+        # same list. Only decide once the enjoyed-subjects step has been reached.
+        if "enjoyed_subjects" in answered_ids:
+            enjoyed = getattr(profile, "enjoyed_subjects", None) if profile else None
+            if not enjoyed:
+                return "no subjects enjoyed"
+        return None
+    if step["id"] in ("career_name", "career_reason"):
+        if profile is not None and profile.has_career_in_mind is False:
+            return "no career in mind"
+        return None
+    return None
+
+
+def _reachable_steps(profile: StudentProfile | None, answered_ids: set[str]) -> list[dict]:
+    """Ordered list of steps this student could still be asked, post skip rules."""
+    return [s for s in ONBOARDING_STEPS if not _skip_reason(profile, s, answered_ids)]
+
+
+def _next_step(
+    profile: StudentProfile | None, step: dict, answered_ids: set[str]
+) -> dict | None:
+    """Next question after ``step`` in the adaptive order, or None when done."""
+    pool = _reachable_steps(profile, answered_ids)
+    try:
+        idx = pool.index(step)
+    except ValueError:
+        return None
+    for cand in pool[idx + 1:]:
+        if cand["id"] in answered_ids:
+            continue
+        return cand
+    return None
+
+
+def _question_for(step: dict, profile: StudentProfile | None) -> str:
+    """Question text personalised to what we already know about the student.
+
+    Where earlier answers give Novi something concrete to build on, the prompt
+    is reworded (not new questions) using the name, chosen career or enjoyed
+    subjects — so every student hears a conversation, not a fixed form.
+    """
+    q = step["question"]
+    if profile is None:
+        return q
+    sid = step["id"]
+    name = getattr(profile, "preferred_name", None) or ""
+    name = str(name).strip()
+
+    if sid == "primary_goal":
+        if name:
+            return f"If I could help you with one thing, {name}, what would it be?"
+        return q
+    if sid == "career_reason":
+        career = getattr(profile, "career_name", None) or ""
+        career = str(career).strip()
+        if career:
+            return f"What makes {career} interesting to you?"
+        return q
+    if sid == "hard_subjects":
+        enjoyed = getattr(profile, "enjoyed_subjects", None) or []
+        enjoyed = [str(s) for s in enjoyed if str(s).strip()]
+        if enjoyed:
+            top = ", ".join(enjoyed[:2])
+            return f"You told me you enjoy {top}. Between all of these, which ones still feel like a struggle?"
+        return q
+    if sid == "university":
+        if name:
+            return f"Do you have a university you'd love to study at, {name}? If yes, where is it?"
+        return q
+    return q
+
+
 def _profile(db: Session, user: User) -> StudentProfile | None:
     return db.get(StudentProfile, user.id)
 
@@ -559,7 +646,7 @@ def _state_payload(db: Session, step: dict, user: User, profile: StudentProfile 
         "step_id": step["id"],
         "order": step["order"],
         "type": step["type"].value,
-        "question": step["question"],
+        "question": _question_for(step, profile),
         "input_type": step["input_type"].value,
         "options": _options(db, step, profile),
         "prefill": _prefill(db, user, step),
@@ -664,7 +751,12 @@ async def submit_answer(
     options = _options(db, step, profile)
     _validate(step, data.value, options)
 
-    ans = OnboardingAnswer(student_id=user.id, step_id=step["id"], raw_value=data.value)
+    ans = OnboardingAnswer(
+        student_id=user.id,
+        step_id=step["id"],
+        raw_value=data.value,
+        question=_question_for(step, profile),
+    )
     db.add(ans)
 
     if profile is None:
@@ -715,24 +807,11 @@ async def submit_answer(
         ans.reply = empathy
         letta_reply = empathy
 
-    # Handle branching after "career" step
-    # If career answer is "No idea", skip career_name and career_reason, go to primary_goal
-    if step["id"] == "career":
-        if data.value != "No idea":
-            # Has career in mind -> go to career_name
-            career_idx = next(i for i, s in enumerate(ONBOARDING_STEPS) if s["id"] == "career")
-            nxt = ONBOARDING_STEPS[career_idx + 1]  # career_name
-        else:
-            # No idea -> skip to primary_goal
-            nxt = _step_by_id("primary_goal")
-    elif step["id"] in ("career_name", "career_reason"):
-        # Normal progression through the new career sub-steps
-        idx = ONBOARDING_STEPS.index(step)
-        nxt = ONBOARDING_STEPS[idx + 1] if idx + 1 < len(ONBOARDING_STEPS) else None
-    else:
-        # All other steps use normal sequential progression
-        idx = ONBOARDING_STEPS.index(step)
-        nxt = ONBOARDING_STEPS[idx + 1] if idx + 1 < len(ONBOARDING_STEPS) else None
+    # Adaptive next question: skip rules + reordering derive from the profile
+    # and answers so far (career "No idea" skips career_name/career_reason, no
+    # enjoyed subjects skips hard_subjects, etc.).
+    answered_ids = {a.step_id for a in _answers(db, user)}
+    nxt = _next_step(profile, step, answered_ids)
 
     _sync_user_from_profile(db, user, profile)
 
@@ -801,10 +880,11 @@ def _legacy_kind(input_type: InputType) -> str:
 
 
 def _legacy_step(db: Session, user: User, step: dict) -> dict | None:
-    options = _options(db, step, _profile(db, user))
+    profile = _profile(db, user)
+    options = _options(db, step, profile)
     return {
         "id": step["id"],
-        "question": step["question"],
+        "question": _question_for(step, profile),
         "kind": _legacy_kind(step["input_type"]),
         "options": [o["label"] for o in options],
         "optional": False,
@@ -825,7 +905,7 @@ def _flow_transcript(
         step = by_id.get(a.step_id)
         if not step:
             continue
-        out.append({"role": "assistant", "content": step["question"]})
+        out.append({"role": "assistant", "content": a.question or _question_for(step, profile)})
         out.append({"role": "user", "content": _value_text(a.raw_value)})
         if user is not None and not _is_skip(a.raw_value):
             line = a.reply if a.reply is not None else _empathy_reply(a.step_id, a.raw_value, user, profile)
@@ -853,8 +933,11 @@ def _flow_state(db: Session, user: User) -> dict:
     done = user.onboarding_step == DONE_STEP
     answers = _answers(db, user)
     profile = _profile(db, user)
-    answered = sum(1 for a in answers if not _is_skip(a.raw_value))
-    total = len(ONBOARDING_STEPS)
+    answered_ids = {a.step_id for a in answers}
+    reachable = _reachable_steps(profile, answered_ids)
+    reachable_ids = {s["id"] for s in reachable}
+    total = len(reachable)
+    answered = sum(1 for a in answers if a.step_id in reachable_ids and not _is_skip(a.raw_value))
     current = None if done else _legacy_step(db, user, _current_step(user))
     return {
         "started": True,
@@ -901,7 +984,13 @@ def _submit_flow(
         value = by_label.get(value, value)
     _validate(step, value, options)
 
-    ans = OnboardingAnswer(student_id=user.id, step_id=step["id"], raw_value=submitted, reply=reply)
+    ans = OnboardingAnswer(
+        student_id=user.id,
+        step_id=step["id"],
+        raw_value=submitted,
+        reply=reply,
+        question=_question_for(step, profile),
+    )
     db.add(ans)
 
     if profile is None:
@@ -928,11 +1017,8 @@ def _submit_flow(
             except Exception as exc:
                 logger.warning("failed to persist step '%s' for student %s: %s", step["id"], user.id, exc)
 
-    if step["id"] == "career":
-        nxt = _step_by_id("primary_goal") if value == "No idea" else _step_by_id("career_name")
-    else:
-        idx = ONBOARDING_STEPS.index(step)
-        nxt = ONBOARDING_STEPS[idx + 1] if idx + 1 < len(ONBOARDING_STEPS) else None
+    answered_ids = {a.step_id for a in _answers(db, user)}
+    nxt = _next_step(profile, step, answered_ids)
 
     _sync_user_from_profile(db, user, profile)
 
@@ -995,9 +1081,16 @@ async def flow_skip(
     current = _current_step(user)
     if step is None or current is None or step["id"] != current["id"]:
         raise HTTPException(status_code=404, detail="Step not found or not the current step")
-    idx = ONBOARDING_STEPS.index(step)
-    nxt = ONBOARDING_STEPS[idx + 1] if idx + 1 < len(ONBOARDING_STEPS) else None
-    db.add(OnboardingAnswer(student_id=user.id, step_id=step["id"], raw_value={"skipped": True}))
+    profile = _profile(db, user)
+    nxt = _next_step(profile, step, {a.step_id for a in _answers(db, user)})
+    db.add(
+        OnboardingAnswer(
+            student_id=user.id,
+            step_id=step["id"],
+            raw_value={"skipped": True},
+            question=_question_for(step, profile),
+        )
+    )
     if nxt is None:
         user.onboarding_step = DONE_STEP
         user.onboarding_completed_at = datetime.now(timezone.utc)
@@ -1124,7 +1217,7 @@ def _finalize_history(db: Session, user: User) -> list[dict]:
         step = by_id.get(a.step_id)
         if not step or _is_skip(a.raw_value):
             continue
-        out.append({"role": "assistant", "content": step["question"]})
+        out.append({"role": "assistant", "content": a.question or step["question"]})
         out.append({"role": "user", "content": _value_text(a.raw_value)})
     return out
 
