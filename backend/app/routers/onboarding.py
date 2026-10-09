@@ -47,6 +47,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_student
 from app.letta_client import send_onboarding_message
@@ -138,6 +139,210 @@ FALLBACK_REPLIES = {
     "career_reason": "That's really helpful. What's one thing you'd want Novi to help you with?",
     "primary_goal": "Got it! I'll keep that front and center for you.",
 }
+
+# Warm, reassuring lines Novi sends when an answer signals uncertainty, so the
+# onboarding feels human instead of clinical. Applied to every step's answer via
+# _empathy_reply():
+#
+#   1. EMPATHY_REPLIES  — exact answer matches on the select steps (career,
+#      confidence, ...).
+#   2. MULTI_EMPATHY    — reassurance for multi-select answers (e.g. many hard
+#      subjects).
+#   3. UNSURE_PATTERN   — free-text cues ("idk", "not sure", "no idea", ...) that
+#      trigger GENERIC_EMPATHY on the open-ended steps.
+#
+# "{name}" is replaced with the student's first name (or dropped when unknown).
+EMPATHY_REPLIES = {
+    "career": {
+        "No idea": (
+            "Oh, no problem at all{name} — honestly, most people your age don't have it "
+            "figured out yet, and that's completely normal. That's exactly what I'm here "
+            "for: we'll figure this out together, one step at a time. 💛"
+        ),
+        "Rather not say": (
+            "That's completely okay{name} — you don't need an answer ready right now. "
+            "I'll help you discover it as we go."
+        ),
+    },
+    "confidence": {
+        "Often doubt myself": (
+            "Thank you for saying that{name} — that takes real courage. Doubting yourself "
+            "doesn't mean you're behind, it just means you care. I'll be right here helping "
+            "you build that confidence, step by step."
+        ),
+        "Better when I prepare first": (
+            "That's a strength{name}, not a weakness — knowing you do your best when you're "
+            "prepared is exactly how you get there. We'll make sure you always feel ready."
+        ),
+        "Hard to choose": (
+            "That's okay{name} — you don't have to fit into a label. Take your time; I'm "
+            "just getting to know the real you."
+        ),
+    },
+}
+
+# Multi-select answers that deserve a gentle acknowledgement: step -> (minimum
+# number of selections before the line fires, template).
+MULTI_EMPATHY = {
+    "hard_subjects": (
+        3,
+        "That's a lot to juggle{name} — no wonder some of it feels heavy. We'll find ways "
+        "to make even the tricky bits click, one at a time. 🌱",
+    ),
+}
+
+# Free-text phrases that mean "I'm not sure / I don't have an answer".
+UNSURE_PATTERN = re.compile(
+    r"\b("
+    r"idk|i\s+dunno|dunno|don'?t\s+know|do\s+not\s+know|not\s+sure|unsure|"
+    r"no\s+idea|no\s+clue|clueless|confused|haven'?t\s+(?:decided|thought)|"
+    r"don'?t\s+care|doesn'?t\s+matter|whatever|i\s+guess|maybe|later|"
+    r"nothing|none|n/?a|no|nope|nah|not\s+really|not\s+at\s+all|"
+    r"don'?t\s+have|not\s+yet"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Per-step line when a free-text answer sounds unsure (``default`` is the
+# fallback for any other step).
+GENERIC_EMPATHY = {
+    "university": (
+        "No worries at all{name} — you don't need a university in mind right now. "
+        "Exploring what's out there is a great first step."
+    ),
+    "career_name": (
+        "It's completely okay to be unsure{name} — not having a career picked yet is "
+        "normal, and finding one is exactly what we'll do together."
+    ),
+    "career_reason": (
+        "That's okay{name} — you don't need a perfect reason. Even a small spark of "
+        "curiosity is enough to start from."
+    ),
+    "primary_goal": (
+        "That's alright{name} — you don't need it all figured out. Wanting things to feel "
+        "clearer is a great place to start, and I'll help you get there."
+    ),
+    "default": "That's completely okay{name} — there's no rush. We'll take it one step at a time.",
+}
+
+
+def _empathy_reply(
+    step_id: str, value: Any, user: User, profile: StudentProfile | None
+) -> str | None:
+    """A warm transition line whenever an answer deserves reassurance (or None).
+
+    Runs for every onboarding step: exact matches on select answers, a list-aware
+    line for multi-selects, and free-text uncertainty cues on open questions.
+    """
+    template: str | None = None
+
+    if isinstance(value, list):
+        rule = MULTI_EMPATHY.get(step_id)
+        if rule and len(value) >= rule[0]:
+            template = rule[1]
+    elif isinstance(value, str):
+        text = value.strip()
+        template = EMPATHY_REPLIES.get(step_id, {}).get(text)
+        if template is None and text and UNSURE_PATTERN.search(text):
+            template = GENERIC_EMPATHY.get(step_id, GENERIC_EMPATHY["default"])
+
+    if not template:
+        return None
+
+    name = (getattr(profile, "preferred_name", None) or user.first_name or "").strip()
+    return template.format(name=f", {name}" if name else "")
+
+
+# How long we'll wait on the LLM for an empathetic line before falling back to
+# the deterministic templates. Kept modest so an unsure answer never stalls the
+# flow; Gemini's own free-tier sync delay is part of the budget.
+LLM_EMPATHY_TIMEOUT = 8.0
+
+_EMPATHY_SYSTEM = (
+    "You are Novi, a warm, encouraging AI mentor getting to know a school student "
+    "for the very first time through a short onboarding conversation. The student "
+    "just gave an uncertain, negative, or low-confidence answer to a simple question "
+    "about themselves (e.g. \"no\", \"idk\", \"not sure\", \"I don't know\").\n\n"
+    "Write a single empathetic reply to reassure them. Rules:\n"
+    "- 1–2 short sentences, casual and kind — sound like a caring human mentor.\n"
+    "- Address the student by their first name (it is provided; never invent one).\n"
+    "- Acknowledge their exact situation; never shame or push them.\n"
+    "- React to the uncertainty being about THAT question (e.g. not having a "
+    "university/career picked yet is completely normal), not a canned generic line.\n"
+    "- Do NOT ask a follow-up question; the conversational flow provides the next "
+    "question automatically. Reply with the empathetic line only.\n"
+    "- No markdown, no quotes, no labels.\n"
+)
+
+_EMPATHY_INSTRUCT = (
+    "Student's first name: {name}\n"
+    "Question Novi just asked: {question}\n"
+    "Student's answer: {answer}\n\n"
+    "Write Novi's warm empathetic reply now:"
+)
+
+
+def _student_first_name(user: User, profile: StudentProfile | None) -> str:
+    return (getattr(profile, "preferred_name", None) or user.first_name or "").strip()
+
+
+def _display_value(value: Any) -> str:
+    """Readable rendering of an answer for the LLM prompt."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value if str(v).strip())
+    if isinstance(value, dict):
+        return "skipped"
+    return str(value).strip()
+
+
+def _clean_empathy(text: str) -> str | None:
+    """Normalise an LLM reply into a single displayable bubble."""
+    text = text.strip().strip('"').strip("'").strip()
+    text = re.sub(r"\s*\n+\s*", " ", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    if not text:
+        return None
+    return text[:320]
+
+
+async def _generate_empathy(
+    step: dict, value: Any, user: User, profile: StudentProfile | None
+) -> str | None:
+    """LLM-written empathetic reply for an unsafe answer, or None if not needed.
+
+    The deterministic ``_empathy_reply`` decides WHETHER the answer needs empathy
+    and always provides a usable fallback; the LLM only upgrades the phrasing
+    when it responds on time. Never blocks onboarding: every failure path returns
+    the deterministic line instead of raising.
+    """
+    fallback = _empathy_reply(step["id"], value, user, profile)
+    if not fallback:
+        return None
+    if not settings.GEMINI_API_KEY:
+        return fallback
+
+    try:
+        from app.services import providers
+
+        name = _student_first_name(user, profile) or "my friend"
+        prompt = _EMPATHY_INSTRUCT.format(
+            name=name,
+            question=step.get("question", ""),
+            answer=_display_value(value),
+        )
+        reply = await asyncio.wait_for(
+            providers.gemini.complete(prompt, system=_EMPATHY_SYSTEM),
+            timeout=LLM_EMPATHY_TIMEOUT,
+        )
+        reply = _clean_empathy(reply)
+        if reply:
+            return reply
+    except Exception as exc:  # noqa: BLE001 - onboarding must never hard-fail on the LLM
+        logger.info("LLM empathy unavailable for step '%s': %s", step["id"], exc)
+
+    return fallback
 
 
 def _clean_university_text(text: str) -> str:
@@ -459,7 +664,8 @@ async def submit_answer(
     options = _options(db, step, profile)
     _validate(step, data.value, options)
 
-    db.add(OnboardingAnswer(student_id=user.id, step_id=step["id"], raw_value=data.value))
+    ans = OnboardingAnswer(student_id=user.id, step_id=step["id"], raw_value=data.value)
+    db.add(ans)
 
     if profile is None:
         profile = StudentProfile(student_id=user.id)
@@ -499,6 +705,15 @@ async def submit_answer(
         # 3) Reply line: LettA's own words when it answered, else a warm line.
         if not letta_reply:
             letta_reply = FALLBACK_REPLIES.get(step["id"], "Got it — let's keep going!")
+
+    # Warm, LLM-written transition line for answers that deserve reassurance
+    # (e.g. "No idea" or a flat "no"). The LLM upgrades deterministic templates,
+    # and the line is persisted so the flow transcript shows it too. No-op when
+    # the answer doesn't signal uncertainty (returns None and keeps LettA's reply).
+    empathy = await _generate_empathy(step, data.value, user, profile)
+    if empathy:
+        ans.reply = empathy
+        letta_reply = empathy
 
     # Handle branching after "career" step
     # If career answer is "No idea", skip career_name and career_reason, go to primary_goal
@@ -599,7 +814,11 @@ def _legacy_step(db: Session, user: User, step: dict) -> dict | None:
     }
 
 
-def _flow_transcript(answers: list[OnboardingAnswer]) -> list[dict]:
+def _flow_transcript(
+    answers: list[OnboardingAnswer],
+    user: User | None = None,
+    profile: StudentProfile | None = None,
+) -> list[dict]:
     by_id = {s["id"]: s for s in ONBOARDING_STEPS}
     out: list[dict] = []
     for a in answers:
@@ -608,6 +827,10 @@ def _flow_transcript(answers: list[OnboardingAnswer]) -> list[dict]:
             continue
         out.append({"role": "assistant", "content": step["question"]})
         out.append({"role": "user", "content": _value_text(a.raw_value)})
+        if user is not None and not _is_skip(a.raw_value):
+            line = a.reply if a.reply is not None else _empathy_reply(a.step_id, a.raw_value, user, profile)
+            if line:
+                out.append({"role": "assistant", "content": line})
     return out
 
 
@@ -629,6 +852,7 @@ def _completion_summary(db: Session, user: User, answers: list[OnboardingAnswer]
 def _flow_state(db: Session, user: User) -> dict:
     done = user.onboarding_step == DONE_STEP
     answers = _answers(db, user)
+    profile = _profile(db, user)
     answered = sum(1 for a in answers if not _is_skip(a.raw_value))
     total = len(ONBOARDING_STEPS)
     current = None if done else _legacy_step(db, user, _current_step(user))
@@ -641,19 +865,24 @@ def _flow_state(db: Session, user: User) -> dict:
         "answered": answered,
         "total": total,
         "current": current,
-        "transcript": _flow_transcript(answers),
+        "transcript": _flow_transcript(answers, user, profile),
         "summary": _completion_summary(db, user, answers) if done else None,
         "error": None,
     }
 
 
-def _submit_flow(db: Session, user: User, step_id: str, value: Any) -> dict | None:
+def _submit_flow(
+    db: Session, user: User, step_id: str, value: Any, reply: str | None = None
+) -> dict | None:
     """Non-HTTP version of /answer's core (returns None when advance completes).
 
     The flow frontend submits the *displayed* option label; catalog-driven steps
     (country/curriculum/grade/subjects) use opaque codes as option values, so any
     submitted value that matches a label is mapped back to its value first. Static
     steps are identity (label == value), and free-text answers pass through.
+
+    ``reply`` (optional) is Novi's LLM-written transition line for this answer;
+    it is persisted so the flow transcript can render it on later loads.
     """
     step = _step_by_id(step_id)
     current = _current_step(user)
@@ -672,7 +901,8 @@ def _submit_flow(db: Session, user: User, step_id: str, value: Any) -> dict | No
         value = by_label.get(value, value)
     _validate(step, value, options)
 
-    db.add(OnboardingAnswer(student_id=user.id, step_id=step["id"], raw_value=submitted))
+    ans = OnboardingAnswer(student_id=user.id, step_id=step["id"], raw_value=submitted, reply=reply)
+    db.add(ans)
 
     if profile is None:
         profile = StudentProfile(student_id=user.id)
@@ -746,7 +976,10 @@ async def flow_answer(
         value: Any = data.values
     else:
         value = data.answer
-    _submit_flow(db, user, data.step_id, value)
+    step = _step_by_id(data.step_id)
+    profile = _profile(db, user)
+    reply = await _generate_empathy(step, value, user, profile) if step else None
+    _submit_flow(db, user, data.step_id, value, reply=reply)
     if user.onboarding_step == DONE_STEP:
         _schedule_finalize(user.id)
     return _flow_state(db, user)
@@ -872,7 +1105,8 @@ async def voice_answer(
         value = [_label_to_value(options, label) for label in resolved]
     else:
         value = _label_to_value(options, resolved)
-    _submit_flow(db, user, step["id"], value)
+    reply = await _generate_empathy(step, value, user, profile)
+    _submit_flow(db, user, step["id"], value, reply=reply)
     if user.onboarding_step == DONE_STEP:
         _schedule_finalize(user.id)
     return {"resolved": True, "resolved_value": value, **_flow_state(db, user)}
