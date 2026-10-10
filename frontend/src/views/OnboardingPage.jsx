@@ -32,6 +32,11 @@ export default function OnboardingPage() {
   const logRef = useRef(null);
   const voiceOnRef = useRef(voiceOn);
   voiceOnRef.current = voiceOn;
+  // Number of flagged empathy-reply bubbles already read aloud. Seeded on the
+  // initial load (-1 = not yet seeded) so historical replies are never re-spoken
+  // on a reload; only a reply that arrives after submitting a new answer gets
+  // spoken, chained in front of the next question.
+  const naviSpoken = useRef(-1);
 
   const firstName = user?.first_name?.split(" ")[0] || "there";
 
@@ -154,18 +159,39 @@ export default function OnboardingPage() {
     });
   }, [flow, playQuestion]);
 
-  // Speak the current question whenever it changes (only while voice is on).
-  // On the very first view the greeting is read first, then the first question.
+  // Speak the current question whenever it changes (only while voice is on),
+  // reading any flagged empathy-reply bubbles first. On the very first view the
+  // greeting is read first, then the first question.
   const freshGreeting = flow && !loading && !flow?.done && (flow.transcript || []).length === 0;
   const spokeGreeting = useRef(false);
   useEffect(() => {
+    const replies = (flow?.transcript || []).filter((m) => m.role === "assistant" && m.reply);
+    if (naviSpoken.current === -1) naviSpoken.current = replies.length;
+
     if (freshGreeting && voiceOn && !spokeGreeting.current) {
       spokeGreeting.current = true;
       readGreetingThenQuestion();
       return;
     }
-    if (freshGreeting) return;
-    if (voiceOn && flow?.current?.question) playQuestion(flow.current.question);
+    if (freshGreeting || !voiceOn) return;
+
+    const q = flow?.current?.question;
+    // A new empathy reply arrived with this step change: read it aloud first,
+    // chained into the next question.
+    if (replies.length > naviSpoken.current) {
+      const pending = replies.slice(naviSpoken.current);
+      naviSpoken.current = replies.length;
+      const speakChain = (i) => {
+        if (i >= pending.length) {
+          if (q && stepIdRef.current === flow?.current?.id) playQuestion(q);
+          return;
+        }
+        playQuestion(pending[i].content, () => speakChain(i + 1));
+      };
+      speakChain(0);
+      return;
+    }
+    if (q) playQuestion(q);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freshGreeting, flow?.current?.id, playQuestion, readGreetingThenQuestion]);
 

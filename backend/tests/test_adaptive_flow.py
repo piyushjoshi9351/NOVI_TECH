@@ -79,6 +79,28 @@ def test_career_reason_references_named_career():
     assert _question_for(_step("career_reason"), _prof()) == "What makes you interested in it?"
 
 
+def test_career_reason_not_personalised_with_unsure_career():
+    # Once an unsure/hedged career answer is de-persisted (career_name empty),
+    # or a stale profile still carries an unsure phrase, the career_reason
+    # question must fall back to the neutral wording instead of echoing it.
+    for bad in ("NOT SURE", "idk", "I don't know yet", "no idea"):
+        prof = _prof(career_name=bad)
+        assert _question_for(_step("career_reason"), prof) == "What makes you interested in it?"
+    assert _question_for(_step("career_reason"), _prof(career_name="")) == "What makes you interested in it?"
+
+
+def test_extract_facts_clears_unsure_career():
+    from app.routers.onboarding import _extract_facts
+
+    step = _step("career_name")
+    assert _extract_facts(step, "Software engineer") == {
+        "career_name": "Software engineer",
+        "interest_reason_summary": "",
+    }
+    for bad in ("NOT SURE", "idk", "I don't know yet", "no idea"):
+        assert _extract_facts(step, bad) == {"career_name": "", "interest_reason_summary": ""}
+
+
 def test_hard_subjects_references_enjoyed():
     prof = _prof(enjoyed_subjects=["Science", "Art"])
     q = _question_for(_step("hard_subjects"), prof)

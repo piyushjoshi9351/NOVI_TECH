@@ -368,6 +368,12 @@ def _extract_facts(step: dict, value: Any) -> dict | None:
         if not text:
             return None
         if step_id == "career_name":
+            # An unsure/hedged answer ("not sure", "idk") is not a real career —
+            # keeping it would make the next question ask "What makes NOT SURE
+            # interesting to you?". Persist a blank career so the flow falls
+            # back to the neutral wording instead.
+            if UNSURE_PATTERN.search(text):
+                return {"career_name": "", "interest_reason_summary": ""}
             return {"career_name": text, "interest_reason_summary": ""}
         if step_id == "career_reason":
             return {"career_name": "", "interest_reason_summary": text}
@@ -522,7 +528,7 @@ def _question_for(step: dict, profile: StudentProfile | None) -> str:
     if sid == "career_reason":
         career = getattr(profile, "career_name", None) or ""
         career = str(career).strip()
-        if career:
+        if career and not UNSURE_PATTERN.search(career):
             return f"What makes {career} interesting to you?"
         return q
     if sid == "hard_subjects":
@@ -910,7 +916,7 @@ def _flow_transcript(
         if user is not None and not _is_skip(a.raw_value):
             line = a.reply if a.reply is not None else _empathy_reply(a.step_id, a.raw_value, user, profile)
             if line:
-                out.append({"role": "assistant", "content": line})
+                out.append({"role": "assistant", "content": line, "reply": True})
     return out
 
 
@@ -927,6 +933,14 @@ def _completion_summary(db: Session, user: User, answers: list[OnboardingAnswer]
         "subjects": (ctx.get("subjects_enjoyed") or [])[:4],
         "goal": (ctx.get("goal_vision") or ctx.get("help_wish") or career or "Build a stronger profile"),
     }
+
+
+def _last_reply(answers: list[OnboardingAnswer]) -> str | None:
+    """Newest spoken-worthy transition line (empathy reply), for TTS."""
+    for a in reversed(answers):
+        if not _is_skip(a.raw_value) and a.reply:
+            return a.reply
+    return None
 
 
 def _flow_state(db: Session, user: User) -> dict:
@@ -949,6 +963,7 @@ def _flow_state(db: Session, user: User) -> dict:
         "total": total,
         "current": current,
         "transcript": _flow_transcript(answers, user, profile),
+        "last_reply": _last_reply(answers),
         "summary": _completion_summary(db, user, answers) if done else None,
         "error": None,
     }
