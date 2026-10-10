@@ -36,7 +36,14 @@ async def google_oauth_start(next: str = "/login", intent: str = "student"):
     nonce = secrets.token_urlsafe(32)
     url = auth_service.build_google_authorize_url(nonce, next, intent)
     response = RedirectResponse(url, status_code=302)
-    response.set_cookie("google_oauth_state", nonce, max_age=600, httponly=True, samesite="lax")
+    response.set_cookie(
+        "google_oauth_state",
+        nonce,
+        max_age=600,
+        httponly=True,
+        samesite="lax",
+        secure=True,   # required for the cookie to survive the HTTPS Render→Google→Render round-trip
+    )
     return response
 
 
@@ -45,10 +52,30 @@ async def google_oauth_callback(
     request: Request,
     code: str | None = None,
     state: str | None = None,
+    error: str | None = None,
     db: Session = Depends(get_db),
 ):
     """Exchange the Google code, log the user in, and bounce them back to the frontend."""
-    if not auth_service.google_is_configured() or not code or not state:
+    # Google itself can return ?error=access_denied (or similar) instead of ?code=.
+    # Treat it as a user-cancelled flow, not a server error.
+    if error:
+        logger.info("Google OAuth returned an error response: %s", error)
+        return _google_fail(request, detail="google_oauth_cancelled")
+
+    if not auth_service.google_is_configured():
+        logger.error(
+            "Google OAuth callback reached but OAuth is not configured. "
+            "Ensure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI "
+            "are set as environment variables on Render."
+        )
+        return _google_fail(request, detail="google_oauth_requires_code")
+
+    if not code or not state:
+        logger.warning(
+            "Google OAuth callback missing required params: code=%s state=%s",
+            bool(code),
+            bool(state),
+        )
         return _google_fail(request, detail="google_oauth_requires_code")
 
     expected = request.cookies.get("google_oauth_state")
