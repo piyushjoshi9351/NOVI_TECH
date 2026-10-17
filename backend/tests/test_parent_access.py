@@ -229,22 +229,23 @@ def test_student_cannot_remove_basic_scope(client, user, active_link):
     assert "basic" in r.json()["scopes"]
 
 
-def test_student_link_list_omits_revoked(client, db, user, active_link):
+def test_student_link_list_retains_revoked_history(client, db, user, active_link):
     h = auth_header(user.id, "student")
     client.post(f"/api/v1/student/parent-links/{active_link.id}/revoke", headers=h)
-    assert client.get("/api/v1/student/parent-links", headers=h).json()["links"] == []
+    rows = client.get("/api/v1/student/parent-links", headers=h).json()["links"]
+    assert len(rows) == 1 and rows[0]["status"] == "revoked"
+    assert rows[0]["can_approve"] is False
 
 
 # ------------------------------------------------------------------ parent links API
-def test_parent_link_request_returns_generic_message(client, parent, user):
+def test_parent_link_request_is_retired(client, parent, user):
     r = client.post(
         "/api/v1/parent/links",
         json={"student_email": user.email},
         headers=auth_header(parent.id, "parent"),
     )
-    assert r.status_code == 201
-    assert r.json()["status"] == "pending"
-    assert "sent them a request" in r.json()["message"]
+    assert r.status_code == 410
+    assert "Access requests are retired" in r.json()["detail"]
 
 
 def test_parent_link_request_is_identical_for_unknown_email(client, parent, user):
@@ -259,8 +260,7 @@ def test_parent_link_request_is_identical_for_unknown_email(client, parent, user
         json={"student_email": "nobody@nowhere.test"},
         headers=auth_header(parent.id, "parent"),
     ).json()
-    assert known["message"] == unknown["message"]
-    assert known["status"] == unknown["status"]
+    assert known == unknown
 
 
 def test_parent_student_list_hides_pending_student_details(client, parent, user, pending_link):

@@ -65,4 +65,4 @@ fi
 # Run the real app (app.main:app — NOT the old legacy main:app).
 log "Starting NOVI backend on http://localhost:$PORT  (Ctrl-C to stop)"
 cd "$BACKEND_DIR"
-exec "$PY" -m uvicorn app.main:app $RELOAD --host 0.0.0.0 --port "$PORT"
+exec "$PY" -m uvicorn app.main:app $RELOAD --host 0.0.0.0 --port "$PORT" --no-proxy-headers

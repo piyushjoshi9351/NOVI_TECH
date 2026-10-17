@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core import security
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.rate_limit import login_limiter, signup_limiter
 from app.services import auth as auth_service
 
 logger = logging.getLogger("novi.google_auth")
@@ -16,8 +17,8 @@ logger = logging.getLogger("novi.google_auth")
 router = APIRouter(tags=["auth"])
 
 
-@router.get("/auth/google", include_in_schema=False)
-async def google_oauth_start(next: str = "/login", intent: str = "student"):
+@router.get("/auth/google", include_in_schema=False, dependencies=[Depends(login_limiter)])
+async def google_oauth_start(request: Request, next: str = "/login", intent: str = "student"):
     """Redirect the browser to Google's consent screen.
 
     `next` is the frontend route (/login or /signup) the user returns to.
@@ -32,6 +33,8 @@ async def google_oauth_start(next: str = "/login", intent: str = "student"):
         next = "/login"
     if intent not in ("student", "parent"):
         intent = "student"
+    if intent == "parent":
+        signup_limiter(request)
 
     nonce = secrets.token_urlsafe(32)
     url = auth_service.build_google_authorize_url(nonce, next, intent)
@@ -47,7 +50,7 @@ async def google_oauth_start(next: str = "/login", intent: str = "student"):
     return response
 
 
-@router.get("/auth/google/callback", include_in_schema=False)
+@router.get("/auth/google/callback", include_in_schema=False, dependencies=[Depends(login_limiter)])
 async def google_oauth_callback(
     request: Request,
     code: str | None = None,
@@ -95,6 +98,8 @@ async def google_oauth_callback(
         return _google_fail(request, detail="google_oauth_verification_failed")
     if intent not in ("student", "parent"):
         intent = "student"
+    if intent == "parent":
+        signup_limiter(request)
 
     try:
         user, is_new = await auth_service.google_login(code, db, intent)
@@ -106,9 +111,10 @@ async def google_oauth_callback(
         return _google_fail(request, detail="google_oauth_failed")
 
     role = getattr(user.role, "value", user.role)
-    token = security.create_access_token(str(user.id), str(role))
+    token = security.create_access_token(str(user.id), str(role), user.token_version)
     dest = f"{settings.FRONTEND_URL.rstrip('/')}{next_path}?google_token={token}&google_new={'1' if is_new else '0'}"
     response = RedirectResponse(dest, status_code=302)
+    response.headers["Cache-Control"] = "no-store"
     response.delete_cookie("google_oauth_state")
     return response
 

@@ -8,6 +8,29 @@ chose that section, and it disappears the moment they switch it off.
 
 ---
 
+## Account setup and lifecycle
+
+Parent signup (`POST /api/v1/auth/parent/register`) asks for name/email/password
+or Google and returns a parent JWT plus `needs_child_setup`. `/parent/add-child`
+is resumable and reachable later from `/parent`; multiple children are supported.
+`POST /api/v1/parent/students` uses the authenticated parent ID, assigns student
+role on the server, and creates an active `basic` link in the same transaction.
+A duplicate email returns 409 without changing that account. Optional agent
+creation runs after commit and cannot fail account creation.
+
+The parent privately gives the child the email and temporary password. Neither
+password nor student token is returned. `activation_source=parent_created` and
+`activated_at` record creation; `confirmed_at` remains NULL. A new child must
+choose a different password before normal student APIs. This invalidates older
+JWTs via `token_version`. Verified Google sign-in invalidates the temporary
+credential and bypasses that reset screen. Existing users are not forced to reset.
+
+The child list exposes only a safe `account_state` for active links: account
+created / awaiting first login / onboarding in progress / active. It does not
+expose login timestamps or auth internals. Legacy pending/revoked rows keep their
+status labels. Legacy pending approval requires an unexpired invitation; revoked
+rows cannot be approved. `/overview` redirects to `/parent`.
+
 ## 1. Consent model
 
 Three sections, stored on `parent_student_links.scopes`. The source of truth is
@@ -328,22 +351,23 @@ endpoint down with `FUNCTION novi_db.iif does not exist`. These tests compile th
 real projection queries with the MySQL dialect and scan the app for `func.iif`,
 so the class of bug fails in CI instead of production.
 
-`backend/scripts/smoke_parent_dashboard.py` drives a **running** backend over HTTP
-against the real MySQL — the router-level dependency, the migrated cache table,
-the audit log line and the exact JSON a browser receives. Run it with:
+`backend/tests/test_parent_first_e2e.py` exercises the HTTP smoke drivers against
+isolated test databases: parent registration -> child creation -> child login ->
+password change -> onboarding access -> scope-filtered tracking -> student revoke.
+The parent JWT is returned at registration and remains unchanged by child creation.
 
+The three scripts `backend/scripts/smoke_{parent_flow,parent_dashboard,application}.py`
+can also drive a **disposable local** running backend over HTTP. They create
+synthetic family rows and leave them for inspection; they never import the
+configured DB directly, fabricate JWTs or print passwords/tokens. Run from root:
+
+```bash
+backend/venv/bin/python backend/scripts/smoke_parent_dashboard.py http://127.0.0.1:8000
 ```
-../venv/bin/python scripts/smoke_parent_dashboard.py [base_url]
-```
 
-Two traps it exists to catch, both invisible to `TestClient`:
-
-- HTTP header names are case-insensitive, but `dict(resp.headers)` is a plain
-  dict, so `headers.get("Cache-Control")` returns `None` against a response that
-  does carry `cache-control`. It reports a missing privacy header that is
-  actually present. The harness lower-cases header names for exactly this reason.
-- `/auth/signup` with `role: parent` returns **no token**; you must call
-  `/auth/login` afterwards. The script does.
+`backend/scripts/verify_frontend_contract.py` checks the shared auth contract and
+scoped routes without connecting to a DB. The MySQL upgrade rehearsal and its
+saved report are documented in [SETUP.md](SETUP.md#verify).
 
 ---
 
@@ -364,12 +388,6 @@ Two traps it exists to catch, both invisible to `TestClient`:
 - **`build_growth()` issues a second count query** for `milestones_completed`
   alongside the capped milestone list, so the rollup stays truthful past the
   display cap of 10.
-- **The advisor rate-limit assertion needs a fresh parent.** The limit is a 60s
-  sliding window and the LLM-backed calls above are slow enough that their
-  timestamps age out mid-burst, so asserting against a parent that already made
-  advisor calls is flaky. The smoke test registers a second parent to get a
-  clean counter.
-- **Smoke runs leave rows behind.** It creates real students, parents and links
-  with a timestamped `smoke.*@example.com` prefix rather than cleaning up, so a
-  failed run is debuggable. Add a teardown step if the rows ever become a
-  problem.
+- **Smoke runs leave rows behind.** Use a disposable local database. Fixtures
+  are synthetic and only request method/path/status is logged. Avoid repeated
+  runs from one IP inside the auth rate-limit window.

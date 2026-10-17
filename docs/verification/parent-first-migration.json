@@ -1,0 +1,36 @@
+{
+  "status": "passed",
+  "image": "mysql:8.0",
+  "started_at": "2026-10-16T20:02:53.020212+00:00",
+  "mysql_version": "8.0.46",
+  "migration_review": [
+    {
+      "file": "0008_parent_provisioned_students.sql",
+      "sha256": "62a98c5e0726791892bb4ed6aa2cdecb7e10aae0bef603e45d5c13699659a05a",
+      "additive_operations": 7
+    },
+    {
+      "file": "0009_account_sign_in_metadata.sql",
+      "sha256": "ca9bb1af92d1ddcbf8534b567d79d6d0351056bfca2d39d753094cee7bbfe0e1",
+      "additive_operations": 2
+    }
+  ],
+  "fresh_migrations": 9,
+  "legacy_users": 8,
+  "legacy_links": 7,
+  "scenarios": [
+    "active links with exact scopes",
+    "multiple parents",
+    "revoked links",
+    "pending linked students",
+    "expired invitation-only links",
+    "revoked invitation",
+    "student without parent",
+    "legacy Google student and parent"
+  ],
+  "preservation": "all legacy columns equal before and after upgrade and explicit replay",
+  "storage": "tmpfs only; no project or external volumes",
+  "synthetic_restore": true,
+  "container_removed": true,
+  "finished_at": "2026-10-16T20:03:11.506314+00:00"
+}

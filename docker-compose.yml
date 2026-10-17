@@ -8,7 +8,7 @@
     env_file:
       - ./backend/.env
     environment:
-      - LETTA_PG_URI=postgresql://novi:novi@postgres:5432/letta
+      - LETTA_PG_URI=postgresql://novi:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}@postgres:5432/letta
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
     depends_on:
       postgres:
@@ -20,7 +20,7 @@
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: novi
-      POSTGRES_PASSWORD: novi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}
       POSTGRES_DB: letta
     volumes:
       - letta_pg_016_data:/var/lib/postgresql/data
@@ -38,6 +38,28 @@
     networks:
       - novi-net
 
+  mysql:
+    image: mysql:8.0
+    container_name: novi_mysql
+    restart: unless-stopped
+    # Published on host 3307 so it never clashes with a native MySQL on 3306.
+    # backend/.env must point at 127.0.0.1:3307 when running the backend natively.
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in the root .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-novi_db}
+    ports:
+      - "3307:3306"
+    volumes:
+      - novi_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", 'MYSQL_PWD="$${MYSQL_ROOT_PASSWORD}" mysqladmin ping -h localhost -u root --silent']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - novi-net
+
   backend:
     build:
       context: ./backend
@@ -50,8 +72,11 @@
     env_file:
       - ./backend/.env
     environment:
-      - DB_HOST=host.docker.internal
+      - DB_HOST=mysql
       - DB_PORT=3306
+      - DB_PASSWORD=${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in the root .env}
+      - DB_NAME=${MYSQL_DATABASE:-novi_db}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
       - LETTA_BASE_URL=http://letta:8283
       - INTERNAL_CALLBACK_BASE_URL=http://backend:8000
       - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
@@ -63,6 +88,8 @@
         condition: service_started
       letta:
         condition: service_started
+      mysql:
+        condition: service_healthy
     ports:
       - "8000:8000"
 
@@ -81,6 +108,11 @@
 
 volumes:
   letta_pg_016_data:
+  # Pre-existing MySQL data volume (created by an earlier `docker run`). Kept
+  # external so the populated `novi_db` survives and compose just reuses it.
+  novi_mysql_data:
+    external: true
+    name: 937dd5cba57369a11f8d5c1900f212ebc45443fc837a0c6d960e245dda319853
 
 networks:
   novi-net:

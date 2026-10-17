@@ -34,17 +34,30 @@ def _get_current_user(
     user = db.get(User, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+    # Pre-refactor JWTs remain usable only until this account changes password.
+    version = payload.get("token_version", 0)
+    if type(version) is not int or version < 0 or version != user.token_version:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+def get_current_user_for_setup(
+    user: User = Depends(_get_current_user),
+) -> User:
+    """Identity/password change only, including temporary-password accounts."""
     return user
 
 
 def get_current_user(
     user: User = Depends(_get_current_user),
 ) -> User:
+    if user.role == UserRole.STUDENT and user.must_change_password:
+        raise HTTPException(status_code=403, detail="Password change required")
     return user
 
 
 def get_current_student(
-    user: User = Depends(_get_current_user),
+    user: User = Depends(get_current_user),
 ) -> User:
     if user.role != UserRole.STUDENT:
         raise HTTPException(status_code=403, detail="Student access required")

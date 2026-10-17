@@ -4,9 +4,8 @@ Everything here is behind the same consent gate as the v1 dashboard
 (``app.services.parent_links`` for authorization,
 ``app.services.parent_projection`` for what may be shown).
 
-``/parents/link`` and ``/parents/advisor`` are retained only because the existing
-parent frontend still calls them; both now sit behind the consent flow and both
-delegate their data access to the projection.
+``/parents/link`` is retired. Dashboard and advisor data access is restricted
+to the requesting parent's active link and its scoped projection.
 
 Advisor invariants
 ------------------
@@ -27,6 +26,7 @@ import asyncio
 import logging
 import time
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -39,11 +39,7 @@ from app.schemas.parent import (
     MAX_ADVISOR_HISTORY_TURNS,
     MAX_ADVISOR_QUESTION,
 )
-from app.services import parent_links
 from app.services import parent_projection as projection
-from app.services import universities as uni_svc
-from app.services.career_dna import get_dna
-from app.services.dashboard import progress_indicators
 
 logger = logging.getLogger("novi.parents")
 
@@ -75,17 +71,8 @@ def reset_rate_limits() -> None:
 
 
 def request_link(db: Session, parent: User, student_email: str) -> ParentStudentLink:
-    """Legacy instant-link entry point (POST /parents/link).
-
-    Now delegates to the consent flow: a link is created PENDING and must be
-    approved by the student. The old behavior -- silently gaining access to a
-    student by knowing their email -- is exactly what this prompt removes.
-
-    The returned link is echoed to the caller only so the UI can tell "you are
-    connected" apart from "request sent"; it never reveals whether the target
-    email belongs to an existing account.
-    """
-    return parent_links.create_pending_link(db, parent, student_email)
+    """Retired entry point, including callers outside the old HTTP route."""
+    raise HTTPException(status_code=410, detail="Access requests are retired")
 
 
 def linked_students(db: Session, parent: User) -> list[User]:
@@ -115,72 +102,37 @@ def _active_link(db: Session, parent: User, student_id: int) -> ParentStudentLin
     )
 
 
-def child_summary(db: Session, child: User) -> dict:
+def child_summary(db: Session, parent: User, child: User) -> dict:
     """Child summary for the legacy parent dashboard.
 
     Same projections as the v1 cards -- no raw text, no DNA evidence. ``insight``
     uses the deterministic parent-voice template so this path never shows the
     student-facing chat copy the old ``fallback_insight`` produced.
     """
-    dna = get_dna(child, db)
-    progress = progress_indicators(db, child)
-    matches = uni_svc.recent_matches(db, child)
-    improvements = []
-    if matches:
-        improvements = matches[0].improvements or []
-
-    career = None
-    from app.services.careers import list_career_matches
-
-    cm = list_career_matches(db, child)
-    if cm:
-        career = cm[0].career.title
-
     from app.services.parent_insight import template_insight
 
-    link = _first_link(db, child)
-    if link is not None:
-        snapshot = projection.consented_snapshot(db, child, link)
-    else:
-        snapshot = {
-            "first_name": child.first_name or "",
-            "grade": child.grade,
-            "insights": {
-                "top_interests": list(dna.interests or []) if dna else [],
-                "career_zones": list(dna.career_zones or []) if dna else [],
-                "focus_areas": list(dna.career_zones or [])[:4] if dna else [],
-                "top_career_matches": [career] if career else [],
-            },
-        }
+    link = _active_link(db, parent, child.id)
+    if link is None:
+        raise HTTPException(status_code=404, detail="Student not found")
+    snapshot = projection.consented_snapshot(db, child, link)
+    basic = snapshot.get("basic") or {}
+    insights = snapshot.get("insights") or {}
 
     return ParentChildSummary(
         # First name only -- the last name is not needed and is not shared.
         name=child.first_name or "Your child",
         grade=child.grade,
-        career_direction=progress["career_direction"],
-        profile_strength=progress["profile_strength"],
-        university_readiness=progress["university_readiness"],
-        month_focus=improvements,
+        career_direction=basic.get("career_direction") or "Exploring",
+        profile_strength=basic.get("profile_strength") or 0,
+        university_readiness=basic.get("university_readiness") or 0,
+        month_focus=insights.get("focus_areas") or [],
         insight=template_insight(snapshot),
     ).model_dump()
 
 
-def _first_link(db: Session, child: User) -> ParentStudentLink | None:
-    """Any active link to this student -- used only to read its consent scopes."""
-    return db.scalar(
-        select(ParentStudentLink)
-        .where(
-            ParentStudentLink.student_id == child.id,
-            ParentStudentLink.status == LinkStatus.ACTIVE,
-        )
-        .order_by(ParentStudentLink.id.asc())
-        .limit(1)
-    )
-
-
 def parent_dashboard(db: Session, parent: User) -> dict:
     children = linked_students(db, parent)
-    summaries = [child_summary(db, c) for c in children]
+    summaries = [child_summary(db, parent, c) for c in children]
     if not summaries:
         insight = "Link a student to start following their journey."
     else:
@@ -235,8 +187,8 @@ async def advisor(
 
     if not child or link is None:
         return (
-            "Once your child approves your request and chooses what to share, "
-            "I can answer questions about their journey."
+            "Add a child account or choose an active connection so I can answer "
+            "from the available parent-safe summary of their journey."
         )
 
     # Only consented sections -- revoking one removes it from the very next

@@ -72,6 +72,18 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # NULL means legacy provenance is unknown, not that password login is off.
+    has_local_password: Mapped[bool | None] = mapped_column(default=True, nullable=True)
+    first_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Legacy accounts keep their credentials; provisioning opts new students in.
+    must_change_password: Mapped[bool] = mapped_column(default=False, server_default="0", nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    created_by_parent_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", name="fk_users_created_by_parent_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     role: Mapped[UserRole] = mapped_column(sa_enum(UserRole), nullable=False, default=UserRole.STUDENT, server_default="student")
     first_name: Mapped[str] = mapped_column(String(100), default="")
     last_name: Mapped[str] = mapped_column(String(100), default="")
@@ -131,9 +143,16 @@ class User(Base):
     def onboarding_completed(self) -> bool:
         return self.onboarding_step == "completed" or self.onboarding_completed_at is not None
 
+    @property
+    def needs_child_setup(self) -> bool:
+        return self.role == UserRole.PARENT and not any(
+            link.status == LinkStatus.ACTIVE and link.student_id is not None
+            for link in self.linked_children
+        )
+
 
 class ParentStudentLink(Base):
-    """A parent's request to follow a student, gated on the student's consent.
+    """A parent-student relationship, including legacy consent requests.
 
     Two shapes share this table:
 
@@ -146,6 +165,10 @@ class ParentStudentLink(Base):
 
     ``scopes`` is the student's sharing consent (see LINK_SCOPES) and defaults
     to just ``basic`` -- a parent never sees more by default.
+
+    ``activation_source`` and ``activated_at`` record automatic activation for
+    parent-created students separately from student approval (``confirmed_at``).
+    They stay NULL on legacy rows: no historical activation source is inferred.
     """
 
     __tablename__ = "parent_student_links"
@@ -178,6 +201,8 @@ class ParentStudentLink(Base):
     invited_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     invite_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activation_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -196,14 +221,12 @@ class ParentStudentLink(Base):
         return name in self.scope_names
 
     @property
-    def is_expired(self, now: datetime | None = None) -> bool:
-        """True when a pending invitation-only link has passed its expiry.
-
-        Never expires a claimed link: those are governed by status, not a timer.
-        """
-        if self.student_id is not None or not self.expires_at:
+    def is_expired(self) -> bool:
+        """Pending invitations expire even after attachment; active links do not."""
+        if self.status != LinkStatus.PENDING or not self.expires_at:
             return False
         expires = self.expires_at
-        if now is None:
-            now = datetime.now(timezone.utc) if expires.tzinfo else datetime.now()
-        return expires < now
+        now = datetime.now(timezone.utc)
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return expires <= now

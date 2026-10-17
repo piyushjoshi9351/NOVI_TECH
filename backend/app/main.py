@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.router import api_router
 from app.core.database import Base, engine
@@ -59,6 +60,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts=[host.strip() for host in settings.TRUSTED_PROXY_HOSTS.split(",") if host.strip()],
 )
 
 app.include_router(api_router)

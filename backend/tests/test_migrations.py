@@ -7,6 +7,8 @@ and nothing survives to corrupt the statement that follows.
 """
 
 from pathlib import Path
+import re
+import sqlite3
 
 from app.db.run_migrations import MIGRATIONS_DIR, _statements
 
@@ -90,3 +92,19 @@ def test_parent_insight_cache_migration_is_idempotent_by_construction():
     # survive the split intact.
     assert any(s.upper().startswith("PREPARE") for s in stmts)
     assert any(s.upper().startswith("DEALLOCATE") for s in stmts)
+
+
+def test_auth_migration_defaults_existing_and_new_users_to_version_zero():
+    """Exercise the actual additive column DDL on populated legacy rows."""
+    statements = _statements(MIGRATIONS_DIR / "0008_parent_provisioned_students.sql")
+    ddl = []
+    for statement in statements:
+        ddl.extend(re.findall(r"'(ALTER TABLE `users` ADD COLUMN `(?:token_version|must_change_password)` [^']+)'", statement))
+    assert len(ddl) == 2
+    with sqlite3.connect(":memory:") as db:
+        db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY)")
+        db.executemany("INSERT INTO users (id) VALUES (?)", [(1,), (2,)])
+        for statement in ddl:
+            db.execute(statement)
+        db.execute("INSERT INTO users (id) VALUES (3)")
+        assert db.execute("SELECT id, token_version, must_change_password FROM users ORDER BY id").fetchall() == [(1, 0, 0), (2, 0, 0), (3, 0, 0)]

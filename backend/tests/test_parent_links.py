@@ -4,7 +4,7 @@ These are the rules that make parent access legitimate, so they are tested at th
 service layer (no HTTP) to isolate the state machine.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -71,7 +71,7 @@ def test_only_token_hash_is_persisted(db, parent):
 
 def test_invite_expires_in_14_days(db, parent):
     link = parent_links.create_pending_link(db, parent, "ghost@nowhere.test")
-    delta = link.expires_at - datetime.now()
+    delta = link.expires_at - datetime.now(timezone.utc).replace(tzinfo=None)
     assert timedelta(days=13, hours=23) < delta <= timedelta(days=14)
 
 
@@ -238,22 +238,14 @@ def test_links_for_student_excludes_other_students(db, pending_link, other_stude
     assert parent_links.links_for_student(db, other_student) == []
 
 # ------------------------------------------------------- legacy /parents/link
-def test_legacy_link_endpoint_reports_pending_not_linked(client, parent, user):
-    """The pre-existing parent overview page still POSTs /parents/link.
-
-    It must not 500 and must not claim success, because the link now needs the
-    student's approval.
-    """
+def test_legacy_link_endpoint_is_retired(client, parent, user):
     r = client.post(
         "/api/v1/parents/link",
         json={"student_email": user.email},
         headers=auth_header(parent.id, "parent"),
     )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["pending"] is True
-    assert body["linked"] is False
-    assert body["student"]["name"] == user.display_name
+    assert r.status_code == 410
+    assert "Access requests are retired" in r.json()["detail"]
 
 
 def test_legacy_link_endpoint_survives_an_unknown_email(client, parent):
@@ -264,10 +256,8 @@ def test_legacy_link_endpoint_survives_an_unknown_email(client, parent):
         json={"student_email": "nobody@nowhere.test"},
         headers=auth_header(parent.id, "parent"),
     )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["student"] is None
-    assert body["pending"] is True
+    assert r.status_code == 410
+    assert "nobody@nowhere.test" not in r.text
 
 
 def test_legacy_link_endpoint_does_not_probe_for_known_emails(client, parent, user):
@@ -281,15 +271,10 @@ def test_legacy_link_endpoint_does_not_probe_for_known_emails(client, parent, us
         json={"student_email": "nobody@nowhere.test"},
         headers=auth_header(parent.id, "parent"),
     ).json()
-    assert known["message"] == unknown["message"]
+    assert known == unknown
 
 
-def test_legacy_dashboard_hides_a_pending_student(client, parent, user):
-    client.post(
-        "/api/v1/parents/link",
-        json={"student_email": user.email},
-        headers=auth_header(parent.id, "parent"),
-    )
+def test_legacy_dashboard_hides_a_pending_student(client, parent, user, pending_link):
     r = client.get("/api/v1/parents/dashboard", headers=auth_header(parent.id, "parent"))
     assert r.status_code == 200
     assert all(c["name"] != user.display_name for c in r.json()["children"])

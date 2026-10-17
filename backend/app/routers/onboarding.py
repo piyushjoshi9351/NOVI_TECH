@@ -643,7 +643,11 @@ def _prefill(db: Session, user: User, step: dict) -> Any:
         .order_by(OnboardingAnswer.created_at.desc(), OnboardingAnswer.id.desc())
         .limit(1)
     )
-    return ans.raw_value if ans else None
+    if ans is not None:
+        return ans.raw_value
+    if step["id"] == "name":
+        return f"{user.first_name or ''} {user.last_name or ''}".strip() or None
+    return None
 
 
 def _state_payload(db: Session, step: dict, user: User, profile: StudentProfile | None = None) -> dict:
@@ -897,6 +901,7 @@ def _legacy_step(db: Session, user: User, step: dict) -> dict | None:
         "max_select": None,
         "hint": None,
         "section": "onboarding",
+        "prefill": _prefill(db, user, step),
     }
 
 

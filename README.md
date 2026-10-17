@@ -1,150 +1,111 @@
 # NOVI - AI Student Mentor
 
-An AI-powered chat interface for student guidance and career discovery.
+NOVI supports student career discovery, onboarding, goals, roadmaps and a
+scope-filtered parent dashboard. Parents create the family account first.
 
-## Tech Stack
+## Stack and layout
 
-- **Backend**: FastAPI (Python)
-- **Database**: MySQL + Letta (for AI memory)
-- **AI**: Google Gemini API (free tier)
-- **Frontend**: HTML/CSS/JavaScript
+- Backend: FastAPI, SQLAlchemy, MySQL 8, custom bcrypt/JWT authentication.
+- Frontend: Next.js App Router, React, Tailwind; `frontend/app/` routes wrap
+  components in `frontend/src/views/`.
+- AI: Gemini / Ollama and optional Letta memory backed by PostgreSQL.
+- Auth: `backend/app/api/{auth,google_auth,parent,student_links}.py`,
+  `backend/app/core/{deps,security,rate_limit}.py`, and
+  `backend/app/services/{auth,parent_students,parent_links}.py`.
+- Schema: `backend/app/models/user.py`; additive SQL in `backend/migrations/`.
+- Shared browser auth: `frontend/src/{auth.jsx,useAuthForm.js,authFlow.js,api.js}`.
 
-## Prerequisites
+## Start locally
 
-1. **Docker Desktop** - Install from https://www.docker.com/products/docker-desktop
-2. **Python 3.10+** - Already installed
-3. **Gemini API Key** - Get free from https://makersuite.google.com/app/apikey
+Use Python 3.12, Node.js 22, and a development MySQL 8 database. Copy
+`backend/.env.example` to `backend/.env`, set database credentials and a generated
+JWT key, and follow [SETUP.md](SETUP.md) for commands and optional Docker services.
+Run FastAPI on port 8000 and Next.js on port 3000. Open the frontend at
+<http://localhost:3000>; API documentation is at <http://localhost:8000/docs>.
 
-## Quick Start
+Root `.env.example` supplies Compose interpolation settings; `backend/.env.example`
+supplies application settings. Never commit populated environment files.
+The project Compose file references an existing external MySQL volume; verification
+uses its own throwaway container and never attaches that volume.
 
-### 1. Get Gemini API Key (Free)
+## Account flow
 
-1. Go to https://makersuite.google.com/app/apikey
-2. Sign in with Google account
-3. Click "Create API Key"
-4. Copy the key
+1. Parent registers with name, email and password (or Google), receives a JWT,
+   and goes to the resumable **Add child** screen.
+2. Parent enters the child's name, email and temporary password. One transaction
+   creates a student and an active `basic` link. The parent remains logged in;
+   the response contains neither student credentials nor a student JWT.
+3. Parent gives the child the credentials themselves. A duplicate email returns
+   409 without modifying the existing account. Parents can add more children.
+4. Student logs in and sets a different personal password before accessing normal
+   student APIs. The server increments `token_version` and replaces the JWT,
+   invalidating tokens issued with the temporary credential. Onboarding prefills
+   the name the parent entered.
+5. A verified Google login for an existing parent-created student invalidates
+   the temporary password and tokens, clears the first-login restriction and
+   continues to onboarding. Unknown student emails cannot sign up with Google.
 
-### 2. Update Environment Variables
+Passwords require at least 8 characters and at most 72 UTF-8 bytes. Google-only
+accounts do not see a local password-change form. Existing students can still log
+in and are not forced to change passwords by the migrations. New public student
+signup is disabled. New links require no student approval; students retain scope
+controls and revocation. Legacy pending/invitation/revoked rows remain unchanged.
 
-Edit `backend/.env` and replace `your_gemini_api_key_here` with your actual API key:
+## Main auth and family endpoints
 
-```
-GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxx
-```
+Paths below are prefixed with `/api/v1`.
 
-### 3. Start Services with Docker
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/auth/parent/register` | Parent account + JWT + `needs_child_setup` |
+| POST | `/auth/login` | Existing parent or student login |
+| GET | `/auth/me` | Authoritative identity and setup flags |
+| POST | `/auth/change-password` | Current-password proof, new JWT and token invalidation |
+| POST | `/parent/students` | Parent-only child + immediate active link |
+| GET | `/parent/students` | Own children/legacy link states and safe account state |
+| GET | `/parent/students/{id}/overview`, `/insights`, `/memory` | Scoped projections |
+| GET/PATCH/POST | `/student/parent-links` and per-link scope/revoke actions | Student controls |
+| POST | `/parents/advisor` | Parent advisor using scoped projections only |
+
+`POST /auth/signup` is disabled (403). `POST /parent/links`,
+`POST /parents/link`, and `GET /auth/links` are retired (410).
+No parent response exposes raw chats, check-in text or Letta memory.
+See [PARENT_DASHBOARD.md](PARENT_DASHBOARD.md) for the projection policy and
+[PRODUCT.md](PRODUCT.md) for the student feature map.
+
+## Verification
+
+From the repository root (Windows uses `backend/venv/Scripts/python.exe`):
 
 ```bash
-# From the project root
-docker-compose up -d
+backend/venv/bin/python -m pytest backend/tests -q
+backend/venv/bin/python backend/scripts/verify_frontend_contract.py
+backend/venv/bin/python backend/scripts/verify_migration_parent_first.py
+cd frontend
+node --test tests/*.test.mjs
+npm run lint
+npm run build
 ```
 
-This starts:
-- MySQL database (port 3306)
-- Letta server (port 8283)
-- Redis (port 6379)
+The MySQL rehearsal requires Docker and creates only a labelled, disposable
+MySQL container with tmpfs storage. It applies all migrations to a fresh schema,
+restores a synthetic pre-0008 dump, and checks the upgrade preserves legacy data.
+Its last result is saved in
+[docs/verification/parent-first-migration.json](docs/verification/parent-first-migration.json).
+HTTP smoke scripts create fixture families and must target a disposable local
+backend/database; see [SETUP.md](SETUP.md).
 
-### 4. Install Python Dependencies
+## Deployment
 
-```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Install dependencies
-pip install -r backend/requirements.txt
-```
-
-### 5. Start the Application
-
-```bash
-# From the project root
-cd backend
-source ../venv/bin/activate
-python main.py
-```
-
-> 📖 For the memory & recall system (how NOVI remembers students across
-> Grades 9–12, storage locations, dedup, caching, and operational commands)
-> see **`MEMORY_SYSTEM.md`**.
-
-### 6. Open the Application
-
-Open your browser and go to:
-```
-http://localhost:8000
-```
-
-## Project Structure
-
-```
-novi_tech_app/
-├── docker-compose.yml      # Docker services (MySQL, Letta, Redis)
-├── backend/
-│   ├── app/               # FastAPI application (run: `uvicorn app.main:app`)
-│   │   ├── api/           # Routers (auth, google_auth, chat, ...)
-│   │   ├── models/        # SQLAlchemy models
-│   │   ├── schemas/       # Pydantic schemas
-│   │   ├── services/      # Business logic
-│   │   └── db/            # Seeds + migration runner
-│   ├── migrations/        # SQL migrations (0001_, 0002_, ...)
-│   ├── requirements.txt   # Python dependencies
-│   └── .env               # Environment variables
-├── frontend/
-│   ├── app/                # Next.js (App Router) routes
-│   ├── src/views/          # Page components
-│   └── static/
-│       └── styles.css      # Styling (served by FastAPI at /static/*)
-└── README.md
-```
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/signup` | Create new account |
-| POST | `/api/auth/login` | Login |
-| POST | `/api/chat` | Send message |
-| GET | `/api/conversations/{user_id}` | Get conversations |
-| GET | `/api/conversations/{id}/messages` | Get messages |
-| GET | `/api/user/{id}/career-dna` | Get Career DNA |
-| POST | `/api/user/{id}/goals` | Create goal |
-| GET | `/api/user/{id}/goals` | Get goals |
-
-## Features
-
-- ✅ Chat with AI mentor (Novi)
-- ✅ Persistent conversations
-- ✅ User authentication
-- ✅ Career DNA profile
-- ✅ Goals management
-- ✅ Career Passport
-- ✅ Modern, responsive UI
-
-## Troubleshooting
-
-### MySQL Connection Error
-Make sure Docker is running:
-```bash
-docker-compose ps
-```
-
-### Letta Not Available
-The app will fall back to Gemini directly if Letta is not available.
-
-### Port Already in Use
-Change the port in the uvicorn command:
-```bash
-uvicorn app.main:app --port 8001
-```
-
-## Next Steps
-
-After MVP, you can add:
-- Weekly check-ins
-- University explorer
-- Career matching
-- Parent dashboard
-- Admin panel
+**Back up the DB -> run migrations -> deploy backend -> deploy frontend.**
+Set `ENVIRONMENT=production` and a generated `SECRET_KEY` (32+ characters);
+production startup rejects the fallback key. Configure `TRUSTED_PROXY_HOSTS`
+explicitly for your proxy and use `--no-proxy-headers` with Uvicorn.
+Auth/child-creation/advisor limits are per process; coordinate limits through
+Redis or an ingress before scaling workers. Existing students keep their login,
+version-0 tokens and sharing choices; only newly provisioned temporary accounts
+require the first-login password change. Full rollout and rollback notes are in
+[SETUP.md](SETUP.md#deployment).
 
 ---
 
@@ -168,9 +129,10 @@ NOVI is a **FastAPI** application with two persistent data stores:
 
 - **MySQL (`novi_db`)** — the authoritative, relational database for the whole app
   (users, chat history, career DNA, passport, roadmap, planner, growth). Tables are
-  created by SQLAlchemy `Base.metadata.create_all` (no Alembic migrations).
+  created by SQLAlchemy `Base.metadata.create_all`, then numbered SQL migrations
+  run via `backend/app/db/run_migrations.py` (no Alembic).
 - **Letta (per-student agent memory)** — a long-term "memory brain" run in its own
-  Docker container (`letta/letta:latest`, port `8283`), backed by a dedicated
+  Docker container (`letta/letta:0.16.8`, port `8283`), backed by a dedicated
   PostgreSQL + pgvector database (`novi_letta_db`). Each student has ONE Letta agent
   whose ID is persisted in `users.letta_agent_id`, so memory survives across sessions.
 
@@ -337,7 +299,11 @@ erDiagram
 `id` PK · `email` unique · `password_hash` (bcrypt) · `role` (student|parent) ·
 `first_name` · `last_name` · `grade` (9–12) · `school` · `avatar` · `is_active` ·
 **`letta_agent_id`** (bridge to the student's Letta agent) · `created_at` · `updated_at`
-Relations: conversations, dna, matches, goals, roadmap_items, priorities, tasks, items,
+Auth additions: `must_change_password` (false by default), `token_version` (0),
+nullable `created_by_parent_id` (indexed self-FK, ON DELETE SET NULL), nullable
+`has_local_password` (unknown for legacy accounts), nullable `first_login_at`.
+The email unique constraint arbitrates concurrent account creation. Roles remain
+on this single table. Relations: conversations, dna, matches, goals, roadmap_items, priorities, tasks, items,
 checkins, and (via `parent_student_links`) linked children/parents.
 
 #### `parent_student_links` — parent–child binding

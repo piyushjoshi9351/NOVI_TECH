@@ -33,6 +33,41 @@ from app.models.enums import UserRole  # noqa: E402
 from app.models.user import User  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolate_auth_limits_and_block_mysql(monkeypatch):
+    import httpx
+    import pymysql
+    from app.api.parent import parent_creation_limiter, student_creation_limiter
+    from app.core.rate_limit import login_limiter, signup_limiter
+
+    def forbidden_connection(*args, **kwargs):
+        raise AssertionError("Tests must not connect to MySQL")
+
+    monkeypatch.setattr(pymysql, "connect", forbidden_connection)
+
+    def forbidden_http(*args, **kwargs):
+        raise httpx.ConnectError("External HTTP is disabled in tests")
+
+    async def forbidden_async_http(*args, **kwargs):
+        raise httpx.ConnectError("External HTTP is disabled in tests")
+
+    # TestClient's ASGI transport still works; real LLM/provider calls fail fast.
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", forbidden_http)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", forbidden_async_http)
+    from app.llm.base import LLMError
+    from app.services.providers import gemini
+
+    async def unavailable_provider(*args, **kwargs):
+        raise LLMError("No live AI provider in tests")
+
+    # Avoid provider SDK retry/backoff delays as well as external connections.
+    # Tests needing generated content install their own mocks after this fixture.
+    for method in ("complete", "complete_json", "complete_grounded"):
+        monkeypatch.setattr(gemini, method, unavailable_provider)
+    for limiter in (parent_creation_limiter, student_creation_limiter, login_limiter, signup_limiter):
+        limiter.reset()
+
+
 @pytest.fixture()
 def db():
     engine = create_engine(
@@ -185,7 +220,7 @@ def client(db):
         app.dependency_overrides.clear()
 
 
-def auth_header(user_id: int, role: str = "student") -> dict:
+def auth_header(user_id: int, role: str = "student", token_version: int = 0) -> dict:
     from app.core.security import create_access_token
 
-    return {"Authorization": f"Bearer {create_access_token(str(user_id), role)}"}
+    return {"Authorization": f"Bearer {create_access_token(str(user_id), role, token_version)}"}

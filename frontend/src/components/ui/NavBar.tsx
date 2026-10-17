@@ -80,7 +80,7 @@ export default function NavBar() {
               href="/signup"
               className="btn-shine rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:-translate-y-0.5 hover:shadow-lg"
             >
-              Get started
+              Parent signup
             </Link>
           </div>
 
@@ -159,7 +159,7 @@ export default function NavBar() {
                     onClick={() => setOpen(false)}
                     className="rounded-full bg-primary px-5 py-2.5 text-center text-sm font-semibold text-primary-foreground"
                   >
-                    Get started
+                    Parent signup
                   </Link>
                 </div>
               </div>

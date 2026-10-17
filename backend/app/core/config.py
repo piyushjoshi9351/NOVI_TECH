@@ -1,13 +1,16 @@
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus
+from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Project root = ../../ (the folder that contains both `backend` and `frontend`)
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECT_ROOT = BACKEND_DIR.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+DEFAULT_SECRET_KEY = "novi-secret-key-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -16,12 +19,16 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        hide_input_in_errors=True,
     )
 
     # --- App ---
     APP_NAME: str = "NOVI API"
     APP_VERSION: str = "2.0.0"
     DEBUG: bool = False
+    ENVIRONMENT: Literal["development", "test", "production"] = "development"
+    # Comma-separated IPs/CIDRs of proxies allowed to set client IP/scheme.
+    TRUSTED_PROXY_HOSTS: str = ""
     FRONTEND_DIR: str = str(FRONTEND_DIR)
 
     # --- Database (MySQL) ---
@@ -32,7 +39,7 @@ class Settings(BaseSettings):
     DB_NAME: str = "novi_db"
 
     # --- Auth / JWT ---
-    SECRET_KEY: str = "novi-secret-key-change-in-production"
+    SECRET_KEY: str = DEFAULT_SECRET_KEY
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
 
@@ -70,6 +77,13 @@ class Settings(BaseSettings):
     # --- Internal callbacks (Letta tools) ---
     INTERNAL_SHARED_SECRET: str = ""
     INTERNAL_CALLBACK_BASE_URL: str = "http://localhost:8000"
+
+    @model_validator(mode="after")
+    def require_production_secret(self):
+        weak = {DEFAULT_SECRET_KEY, "your_secret_key", "replace_with_generated_secret_key"}
+        if self.ENVIRONMENT == "production" and (self.SECRET_KEY.strip() in weak or len(self.SECRET_KEY.strip()) < 32):
+            raise ValueError("Production requires a generated SECRET_KEY of at least 32 characters")
+        return self
 
     @property
     def database_url(self) -> str:

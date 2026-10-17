@@ -20,9 +20,10 @@ consents keep working with no migration of student choices.
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.schemas.common import ORMModel
+from app.schemas.passwords import NewPassword
 
 
 # --------------------------------------------------------------------------- links
@@ -48,6 +49,7 @@ class ParentLinkOut(ORMModel):
     invited_email_first_name: str | None = None
     created_at: datetime | None = None
     expires_at: datetime | None = None
+    account_state: Literal["account_created", "awaiting_first_login", "onboarding_in_progress", "active"] | None = None
 
 
 class ParentLinkList(BaseModel):
@@ -61,6 +63,37 @@ class ParentStudentRef(ORMModel):
 
     first_name: str = ""
     grade: int | None = None
+
+
+class ParentStudentCreate(BaseModel):
+    """A parent supplies credentials, never a role, owner, or sharing scopes."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr = Field(max_length=255)
+    password: NewPassword
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _trim_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.lower()
+
+
+class ParentStudentCreated(BaseModel):
+    """Creation receipt with no credentials, tokens, or private student data."""
+
+    student_id: int
+    link_id: int
+    name: str
+    status: Literal["active"]
+    scopes: list[str]
+    activated_at: datetime
 
 
 class StudentLinkRequest(BaseModel):
@@ -87,6 +120,9 @@ class StudentLinkOut(ORMModel):
     label: str = ""
     scopes: list[str] = Field(default_factory=list)
     parent_name: str = ""
+    activation_source: str | None = None
+    can_manage: bool = False
+    can_approve: bool = False
     created_at: datetime | None = None
     expires_at: datetime | None = None
 

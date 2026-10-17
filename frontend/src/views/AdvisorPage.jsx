@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { api, esc } from "../api";
 import { showLoader, toast } from "../ui";
 
@@ -217,9 +218,11 @@ export default function AdvisorPage() {
           <div className="eyebrow">Parent Advisor</div>
           <h1>Nothing to advise on yet</h1>
           <p>
-            Once a student approves your request, Novi can answer questions using only
-            the parts of their journey they choose to share with you.
+            Add a child account to connect basic progress. Novi answers from the
+            available parent-safe summary; more detail appears as your child gets
+            started and chooses additional sharing.
           </p>
+          <Link href="/parent/add-child" className="btn">Add child</Link>
         </div>
       </div>
     );

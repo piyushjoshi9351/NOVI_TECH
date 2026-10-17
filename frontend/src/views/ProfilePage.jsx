@@ -4,6 +4,8 @@ import { api, applyAccent, applyTheme, esc, fmtJoined, getTheme, initials, NOVI_
 import { useAuth } from "../auth";
 import { EmptyState, showLoader, toast } from "../ui";
 import ParentAccess from "./student/ParentAccess";
+import PasswordChangeForm from "../components/auth/PasswordChangeForm";
+import { scopeMeta } from "../parentAccess";
 
 const PS_TAGS = [
   ["interests", "Interests", "Coding, cricket, music…", "What you genuinely enjoy — Novi weighs it in every match."],
@@ -58,14 +60,14 @@ export default function ProfilePage() {
     Promise.all([
       api("/auth/me"),
       api("/dna").catch(() => null),
-      api("/auth/links").catch(() => ({ parents: [] })),
+      api("/student/parent-links").catch(() => ({ links: [] })),
       api("/health").catch(() => null),
     ])
       .then(([me, d, l, h]) => {
         if (!alive) return;
         setUser(me);
         setDna(d || {});
-        setLinks(l || { parents: [] });
+        setLinks(l || { links: [] });
         setHealth(h);
         const init = {};
         PS_TAGS.forEach(([k]) => { init[k] = [...(((d && d[k]) || []).map((s) => String(s)))]; });
@@ -137,22 +139,6 @@ export default function ProfilePage() {
     finally { showLoader(false); }
   };
 
-  const savePassword = async () => {
-    const cur = document.querySelector("#ps-curpw")?.value || "";
-    const nw = document.querySelector("#ps-newpw")?.value || "";
-    const cf = document.querySelector("#ps-confpw")?.value || "";
-    if (!cur) { toast("Enter your current password", "err"); return; }
-    if (nw.length < 6) { toast("New password must be at least 6 characters", "err"); return; }
-    if (nw !== cf) { toast("New passwords don't match", "err"); return; }
-    showLoader(true);
-    try {
-      await api("/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: cur, new_password: nw }) });
-      ["#ps-curpw", "#ps-newpw", "#ps-confpw"].forEach((s) => { const el = document.querySelector(s); if (el) el.value = ""; });
-      toast("Password updated 🔒");
-    } catch (ex) { toast(ex.message, "err"); }
-    finally { showLoader(false); }
-  };
-
   const runAccent = (key) => {
     applyAccent(key);
     notifDraft.current.appearance = key;
@@ -160,7 +146,7 @@ export default function ProfilePage() {
     toast(`${NOVI_ACCENTS[key].name} applied 🎨`);
   };
 
-  const parents = (links && links.parents) || [];
+  const parents = (links?.links || []).filter((link) => link.status === "active");
 
   return (
     <>
@@ -266,34 +252,19 @@ export default function ProfilePage() {
             </>
           ) : null}
 
-          {tab === "parents" ? <ParentAccess /> : null}
+          {tab === "parents" ? <ParentAccess onLinksChanged={setLinks} /> : null}
 
           {tab === "security" ? (
             <>
               <div className="ps-section-head"><span className="ps-eyebrow">Security</span></div>
-              <p className="ps-intro">Keep your NOVI account safe. Your new password needs at least 6 characters.</p>
-              <div className="ps-section-title">Change password</div>
-              <div className="ps-fields">
-                <div className="ps-field">
-                  <label htmlFor="ps-curpw">Current password</label>
-                  <input id="ps-curpw" type="password" placeholder="••••••••" autoComplete="current-password" />
-                </div>
-                <div className="ps-field">
-                  <label htmlFor="ps-newpw">New password</label>
-                  <input id="ps-newpw" type="password" placeholder="At least 6 characters" autoComplete="new-password" />
-                </div>
-                <div className="ps-field">
-                  <label htmlFor="ps-confpw">Confirm new password</label>
-                  <input id="ps-confpw" type="password" placeholder="Repeat your new password" autoComplete="new-password" />
-                </div>
-              </div>
-              <div className="ps-save"><button className="btn" onClick={savePassword}>Update password</button></div>
+              <p className="ps-intro">Manage how you sign in to NOVI.</p>
+              <PasswordChangeForm />
               <div className="ps-section-title">Account</div>
               <div className="ps-fields">
                 <div className="ps-field">
                   <label htmlFor="ps-sec-email">Email</label>
                   <input id="ps-sec-email" value={user.email || ""} disabled />
-                  <p className="ps-hint">This is the address you sign in with and how a parent links to you.</p>
+                  <p className="ps-hint">This is the address you use to sign in to your student account.</p>
                 </div>
               </div>
             </>
@@ -379,7 +350,7 @@ export default function ProfilePage() {
               <div className="ps-section-title">Parents</div>
               <div className="ps-row">
                 <span className="ps-ico">👨‍👩‍👧</span>
-                <span className="ps-row-body"><b>Parent access</b><span className="ps-hint">A parent links to you with your email — <b>{esc(user.email || "")}</b>. Only they can start the link.</span></span>
+                <span className="ps-row-body"><b>Parent access</b><span className="ps-hint">Basic progress is connected when your parent creates your account. Manage extra sharing or remove access in Parent access.</span></span>
                 {parents.length
                   ? <span className={`chip ${parents.length ? "acc" : ""}`}>{parents.length === 1 ? "1 linked" : `${parents.length} linked`}</span>
                   : <span className="chip">Not linked yet</span>}
@@ -388,9 +359,9 @@ export default function ProfilePage() {
                 <>
                   <div className="ps-section-title">Linked parents</div>
                   {parents.map((p) => (
-                    <div className="ps-row" key={p.id || p.email}>
+                    <div className="ps-row" key={p.id}>
                       <span className="ps-ico">👤</span>
-                      <span className="ps-row-body"><b>{esc(p.name)}</b><span className="ps-hint">{esc(p.email)}</span></span>
+                      <span className="ps-row-body"><b>{esc(p.parent_name)}</b><span className="ps-hint">{(p.scopes || []).map((scope) => scopeMeta(scope)?.label || scope).join(", ")}</span></span>
                     </div>
                   ))}
                 </>

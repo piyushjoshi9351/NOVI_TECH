@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Check, Loader2, Send, Sparkles, Volume2, VolumeX, X } from "lucide-react";
 import { api, initials } from "../api";
 import { useAuth } from "../auth";
+import { destinationFor } from "../authFlow";
 import { toast } from "../ui";
 import { stopAll, speakText, onSpeakStateChange, VOICE_KEY } from "../speech";
 
@@ -70,17 +71,20 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     setSelected([]);
-    setDraft("");
-  }, [flow?.current?.id]);
+    setDraft(flow?.current?.id === "name" ? String(flow.current.prefill || [user?.first_name, user?.last_name].filter(Boolean).join(" ") || "") : "");
+  }, [flow?.current?.id, flow?.current?.prefill, user?.first_name, user?.last_name]);
 
   // Onboarding is finished: refresh the auth user so the app unlocks the
   // dashboard/nav, then hand over to the dashboard (short pause so the
   // completion summary stays readable).
   useEffect(() => {
     if (!flow?.done) return;
-    refreshUser();
-    const t = window.setTimeout(() => router.replace("/dashboard"), 1600);
-    return () => window.clearTimeout(t);
+    let alive = true;
+    const t = window.setTimeout(async () => {
+      const me = await refreshUser({ fresh: true });
+      if (alive && me) router.replace(destinationFor(me, new URLSearchParams(window.location.search).get("next")));
+    }, 1600);
+    return () => { alive = false; window.clearTimeout(t); };
   }, [flow?.done, refreshUser, router]);
 
   useEffect(() => () => stopAll(), []);

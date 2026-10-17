@@ -1,16 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Baby, BookMarked, Briefcase, CalendarCheck, Dna, GraduationCap, LayoutDashboard, LogOut, Map, MessageCircle, Moon, Sparkles, Sun, UserRound,
 } from "lucide-react";
-import { AuthProvider, useAuth } from "./auth";
+import { useAuth } from "./auth";
+import { redirectFor, setupPath } from "./authFlow";
 import { applyTheme, bootAppearance, getTheme, setPrefKey, warmAllRoutes } from "./api";
 import { Loader, toast, ToastHost } from "./ui";
-import AuthPage from "./views/AuthPage";
-import OnboardingPage from "./views/OnboardingPage";
 
 const studentNav = [
   ["dashboard", "Dashboard"], ["chat", "Chat"], ["dna", "My DNA"],
@@ -24,6 +23,7 @@ const studentNav = [
  * dashboard lives at /parent, which is also where the per-section tabs are. */
 const parentNav = [
   ["parent", "My Children"], ["advisor", "Ask Novi"],
+  ["parent/add-child", "Add child"], ["parent/settings", "Settings"],
 ];
 
 const NAV_ICONS = {
@@ -39,6 +39,8 @@ const NAV_ICONS = {
   overview: LayoutDashboard,
   advisor: Sparkles,
   parent: Baby,
+  "parent/add-child": Baby,
+  "parent/settings": UserRound,
 };
 
 function ThemeToggle() {
@@ -88,7 +90,7 @@ function Sidebar() {
         {items.map(([key, label]) => {
           const Icon = NAV_ICONS[key] || MessageCircle;
           // prefix match, so /parent/<studentId> still lights up "My Children"
-          const active = pathname === `/${key}` || pathname.startsWith(`/${key}/`);
+          const active = pathname === `/${key}` || (key === "parent" ? /^\/parent\/\d+/.test(pathname) : pathname.startsWith(`/${key}/`));
           return (
             <Link key={key} href={`/${key}`} className={active ? "active" : ""}>
               <Icon className="nav-ico" size={18} strokeWidth={2} />
@@ -125,48 +127,47 @@ export function RootShell({ children }) {
   const { token, user, ready } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const search = useSearchParams().toString();
+  const redirect = redirectFor({ token, user, pathname, search });
+  const setup = setupPath(user);
   useEffect(() => {
     // appearance + route pre-warm only ever make sense in the browser
     bootAppearance();
   }, []);
   useEffect(() => {
-    if (!ready || !user?.role) return;
-    warmAllRoutes(user.role);
-  }, [ready, user?.role]);
+    if (!ready || !token || !user?.role || setup || redirect) return;
+    warmAllRoutes();
+  }, [ready, token, user?.role, setup, redirect]);
 
   // A student who hasn't finished onboarding sees ONLY the onboarding flow —
   // no dashboard, no nav, no other route — until it is complete.
   // (Declared before the early returns so every render calls the same hooks.)
-  const onboardingPending = user && user.role !== "parent" && !user.onboarding_completed;
   useEffect(() => {
-    if (!onboardingPending) return;
-    if (pathname !== "/onboarding") router.replace("/onboarding");
-  }, [onboardingPending, pathname, router]);
+    if (ready && redirect) router.replace(redirect);
+  }, [ready, redirect, router]);
 
   const isChat = pathname === "/chat";
 
   if (!ready) return (
     <div className="app">
+      <p role="status">Loading account…</p>
       <Loader />
       <ToastHost />
     </div>
   );
 
-  if (!token) return (
-    <div className="app logged-out">
-      <main id="view" className="view"><AuthPage /></main>
-      <ToastHost />
-    </div>
-  );
+  // The public /login route owns authentication UI. Keep the app shell empty
+  // while navigating there after logout or session expiry.
+  if (!token || !user || redirect) return null;
 
   // A student who hasn't finished onboarding sees ONLY the onboarding flow —
   // no dashboard, no nav, no other route — until it is complete.
-  if (onboardingPending) {
+  if (setup && user.role === "student") {
     return (
       <div className="app app-onboarding">
         <ScrollToTop />
         <main id="view" className="view">
-          <OnboardingPage />
+          {children}
         </main>
         <ToastHost />
       </div>
@@ -187,8 +188,8 @@ export function RootShell({ children }) {
 
 export default function AppShell({ children }) {
   return (
-    <AuthProvider>
+    <Suspense fallback={<p role="status">Loading account…</p>}>
       <RootShell>{children}</RootShell>
-    </AuthProvider>
+    </Suspense>
   );
 }

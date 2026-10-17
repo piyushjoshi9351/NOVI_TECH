@@ -10,92 +10,55 @@ from tests.conftest import auth_header
 
 
 # ------------------------------------------------------------------ parent register
+PARENT_BODY = {"name": "Pat Parent", "email": "newparent@example.com", "password": "Parent-test-pass"}
+
+
 def test_register_parent_fixes_the_role_server_side(db):
-    data = ParentRegisterRequest(
-        email="newparent@example.com", password="hunter2!", student_email="kid@example.com"
-    )
-    user, link = auth_service.register_parent(data, db)
+    user = auth_service.register_parent(ParentRegisterRequest(**PARENT_BODY), db)
     assert user.role == UserRole.PARENT
-
-
-def test_register_parent_has_no_role_field_on_the_body():
-    """A client cannot pick the role: the field does not exist on the schema."""
-    assert "role" not in ParentRegisterRequest.model_fields
-    with pytest.raises(Exception):
-        ParentRegisterRequest(
-            email="x@example.com", password="hunter2!",
-            student_email="kid@example.com", role="parent",
-        )
-
-
-def test_register_parent_creates_a_pending_link(db, user):
-    data = ParentRegisterRequest(
-        email="p2@example.com", password="hunter2!", student_email=user.email
-    )
-    _parent, link = auth_service.register_parent(data, db)
-    assert link.status.value == "pending"
-    assert link.student_id == user.id
-
-
-def test_register_parent_rejects_an_existing_student_email(db, user):
-    data = ParentRegisterRequest(
-        email=user.email, password="hunter2!", student_email="other@example.com"
-    )
-    with pytest.raises(HTTPException) as exc:
-        auth_service.register_parent(data, db)
-    assert exc.value.status_code == 400
-    assert "student" in str(exc.value.detail).lower()
-
-
-def test_register_parent_rejects_an_existing_parent_email(db, parent):
-    data = ParentRegisterRequest(
-        email=parent.email, password="hunter2!", student_email="kid@example.com"
-    )
-    with pytest.raises(HTTPException) as exc:
-        auth_service.register_parent(data, db)
-    assert exc.value.status_code == 400
-
-
-def test_parent_has_no_letta_agent(db):
-    data = ParentRegisterRequest(
-        email="p3@example.com", password="hunter2!", student_email="kid@example.com"
-    )
-    user, _link = auth_service.register_parent(data, db)
+    assert user.needs_child_setup is True
     assert user.letta_agent_id is None
 
 
-def test_register_parent_hashes_the_password(db):
-    from app.core import security
-
-    data = ParentRegisterRequest(
-        email="p4@example.com", password="hunter2!", student_email="kid@example.com"
-    )
-    user, _link = auth_service.register_parent(data, db)
-    assert user.password_hash != "hunter2!"
-    assert security.verify_password("hunter2!", user.password_hash)
+@pytest.mark.parametrize("extra", [{"role": "parent"}, {"student_email": "kid@example.com"}])
+def test_register_parent_rejects_role_and_old_child_email(extra):
+    with pytest.raises(ValueError):
+        ParentRegisterRequest(**PARENT_BODY, **extra)
 
 
-def test_register_parent_endpoint(client):
-    r = client.post("/api/v1/auth/parent/register", json={
-        "email": "ep@example.com",
-        "password": "hunter2!",
-        "name": "Eve",
-        "student_email": "kid@example.com",
-    })
+@pytest.mark.parametrize("fixture_name", ["user", "parent"])
+def test_register_parent_rejects_existing_email(db, request, fixture_name):
+    existing = request.getfixturevalue(fixture_name)
+    old_hash = existing.password_hash
+    with pytest.raises(HTTPException) as exc:
+        auth_service.register_parent(ParentRegisterRequest(**{**PARENT_BODY, "email": existing.email}), db)
+    assert exc.value.status_code == 409
+    db.refresh(existing)
+    assert existing.password_hash == old_hash
+
+
+def test_register_parent_endpoint_authenticates_without_invitation(client, db):
+    from sqlalchemy import func, select
+    from app.core.security import decode_access_token, verify_password
+    from app.models.user import ParentStudentLink, User
+    r = client.post("/api/v1/auth/parent/register", json=PARENT_BODY)
     assert r.status_code == 201
-    assert r.json()["user"]["role"] == "parent"
-    assert "request" in r.json()["message"]
+    body = r.json()
+    assert set(body) == {"access_token", "token_type", "user"}
+    assert body["user"]["role"] == "parent" and body["user"]["needs_child_setup"] is True
+    assert body["user"]["must_change_password"] is False
+    assert decode_access_token(body["access_token"])["token_version"] == 0
+    headers = {"Authorization": f"Bearer {body['access_token']}"}
+    assert client.get("/api/v1/auth/me", headers=headers).json()["id"] == body["user"]["id"]
+    assert db.scalar(select(func.count()).select_from(ParentStudentLink)) == 0
+    assert verify_password(PARENT_BODY["password"], db.get(User, body["user"]["id"]).password_hash)
+    assert PARENT_BODY["password"] not in r.text
 
 
 def test_register_parent_normalizes_email(client):
-    created = client.post("/api/v1/auth/parent/register", json={
-        "email": "MixedCase@Example.com",
-        "password": "hunter2!",
-        "student_email": "kid@example.com",
-    })
-    assert created.status_code == 201, created.text
-    r = client.post("/api/v1/auth/login", json={"email": "mixedcase@example.com", "password": "hunter2!"})
-    assert r.status_code == 200, r.text
+    created = client.post("/api/v1/auth/parent/register", json={**PARENT_BODY, "email": "MixedCase@Example.com"})
+    assert created.status_code == 201
+    assert client.post("/api/v1/auth/login", json={"email": "mixedcase@example.com", "password": PARENT_BODY["password"]}).status_code == 200
 
 
 # ------------------------------------------------------------------ expected_role
@@ -221,142 +184,36 @@ def test_google_url_carries_the_signed_state():
         settings.GOOGLE_CLIENT_ID = ""
 
 
-# ------------------------------------------------------------------ invitation hooks
-def test_password_login_resolves_a_pending_invitation(db, parent, user):
-    from app.services import parent_links
+# ------------------------------------------------------------------ retired signup
+@pytest.mark.parametrize("role", [None, "student", "parent", "admin"])
+def test_public_signup_cannot_create_accounts(client, db, role):
+    from sqlalchemy import func, select
+    from app.models.user import User
+    body = {"email": "new@example.com", "password": "Student-test-pass"}
+    if role is not None:
+        body["role"] = role
+    assert client.post("/api/v1/auth/signup", json=body).status_code == 403
+    assert db.scalar(select(func.count()).select_from(User)) == 0
 
-    invitation = parent_links.create_pending_link(db, parent, user.email)
-    invitation.student_id = None
-    db.commit()
 
+def test_retired_signup_service_cannot_create_accounts(db):
+    import asyncio
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(auth_service.signup(SignupRequest(email="new@example.com", password="Student-test-pass"), db))
+    assert exc.value.status_code == 403
+
+
+def test_login_does_not_claim_invitation_only_legacy_rows(db, parent, user):
+    from app.models.user import ParentStudentLink
+    invitation = ParentStudentLink(parent_id=parent.id, invited_email=user.email, scopes={"basic": True})
+    db.add(invitation)
     user.password_hash = _hash("hunter2!")
     db.commit()
-    db.refresh(user)
-
     auth_service.login(LoginRequest(email=user.email, password="hunter2!"), db)
-
     db.refresh(invitation)
-    assert invitation.student_id == user.id
-    assert invitation.status.value == "pending"
+    assert invitation.student_id is None and invitation.status.value == "pending"
 
 
-def test_signup_resolves_a_pending_invitation(db, parent):
-    import asyncio
-
-    from sqlalchemy import select
-
-    from app.models.user import ParentStudentLink
-    from app.services import parent_links
-
-    parent_links.create_pending_link(db, parent, "later@example.com")
-    data = SignupRequest(email="later@example.com", password="hunter2!", role="student")
-    asyncio.run(auth_service.signup(data, db))
-
-    link = db.scalar(
-        select(ParentStudentLink).where(ParentStudentLink.invited_email == "later@example.com")
-    )
-    assert link.student_id is not None
-    assert link.status.value == "pending"
-
-
-def test_parent_login_does_not_resolve_invitations(db, parent):
-    from app.services import parent_links
-
-    invitation = parent_links.create_pending_link(db, parent, "stranger@example.com")
-    parent.password_hash = _hash("hunter2!")
-    db.commit()
-    db.refresh(parent)
-
-    auth_service.login(LoginRequest(email=parent.email, password="hunter2!"), db)
-    db.refresh(invitation)
-    assert invitation.student_id is None
-
-
-def _hash(password: str) -> str:
-    from app.core import security
-
-    return security.hash_password(password)
-# ------------------------------------------------- signup is student-only
-def test_signup_schema_rejects_role_parent():
-    """A client cannot create a parent through the generic signup route."""
-    with pytest.raises(ValueError) as exc:
-        SignupRequest(email="s@example.com", password="hunter2!", role="parent")
-    assert "parent/register" in str(exc.value)
-
-
-@pytest.mark.parametrize("body", [
-    {"email": "plain@example.com", "password": "hunter2!"},
-    {"email": "explicit@example.com", "password": "hunter2!", "role": "student"},
-])
-def test_signup_without_a_role_still_works(db, body):
-    import asyncio
-
-    user = asyncio.run(auth_service.signup(SignupRequest(**body), db))
-    assert user.role == UserRole.STUDENT
-
-
-def test_signup_endpoint_rejects_role_parent(client, db):
-    """End-to-end: the HTTP surface refuses to mint a parent."""
-    r = client.post("/api/v1/auth/signup", json={
-        "email": "sneaky@example.com", "password": "hunter2!", "role": "parent",
-    })
-    assert r.status_code == 422
-    assert _email_taken(db, "sneaky@example.com") is False
-
-
-def test_signup_endpoint_rejects_other_roles(client, db):
-    for bogus in ("admin", "teacher", "Parent", "PARENT"):
-        r = client.post("/api/v1/auth/signup", json={
-            "email": "sneaky@example.com", "password": "hunter2!", "role": bogus,
-        })
-        assert r.status_code == 422, bogus
-    assert _email_taken(db, "sneaky@example.com") is False
-
-
-def _email_taken(db, email: str) -> bool:
-    from sqlalchemy import select
-
-    from app.models.user import User
-
-    return db.scalar(select(User).where(User.email == email)) is not None
-
-
-def test_signup_endpoint_still_accepts_students(client):
-    r = client.post("/api/v1/auth/signup", json={
-        "email": "okay@example.com", "password": "hunter2!", "role": "student",
-    })
-    assert r.status_code == 200
-    assert r.json()["user"]["role"] == "student"
-
-
-def test_signup_with_no_role_field_still_works(client):
-    r = client.post("/api/v1/auth/signup", json={
-        "email": "norole@example.com", "password": "hunter2!",
-    })
-    assert r.status_code == 200
-    assert r.json()["user"]["role"] == "student"
-
-
-def test_one_email_cannot_hold_two_roles(client):
-    """Register a parent, then try to re-register the same email as a student.
-
-    One email is one role: the second attempt is refused, not converted.
-    """
-    r = client.post("/api/v1/auth/parent/register", json={
-        "email": "dual@example.com", "password": "hunter2!",
-        "student_email": "kid@example.com",
-    })
-    assert r.status_code == 201
-
-    r = client.post("/api/v1/auth/signup", json={
-        "email": "dual@example.com", "password": "hunter2!",
-    })
-    assert r.status_code == 400
-    assert r.json()["detail"] == "Email already registered"
-
-
-def test_parent_email_cannot_be_reused_for_a_student_account(client, parent):
-    r = client.post("/api/v1/auth/signup", json={
-        "email": parent.email, "password": "hunter2!",
-    })
-    assert r.status_code == 400
+def _hash(password):
+    from app.core.security import hash_password
+    return hash_password(password)

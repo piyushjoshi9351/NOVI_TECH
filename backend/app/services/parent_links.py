@@ -1,22 +1,24 @@
-"""Parent <-> student linking, built around student consent.
+"""Legacy parent invitations and student controls over existing links.
 
 Rules this module exists to enforce:
 
-* A link is NEVER created as active. ``create_pending_link`` always produces
-  ``pending``; only the student can approve (or revoke) it.
+* ``create_pending_link`` is a legacy service, no longer exposed for public
+  requests. New parent-created accounts use ``parent_students`` instead.
+* Only unexpired pending links can be approved; revoked links stay revoked.
 * Creating a link never reveals whether an email belongs to an existing account
   -- not in the HTTP response, not in the timing, and not in the error messages.
   Both branches return the same generic acknowledgement.
 * A raw invite token is generated, handed to the InviteSender, and then only its
   SHA-256 hash is stored.
-* Invitation-only links (parent typed an email with no account) are resolved on
-  the student's first VERIFIED signup/login by matching their verified email.
+* Legacy invitation resolution never activates a link and is not invoked by
+  signup/login. Expired or revoked invitations cannot be resolved.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.enums import LinkStatus, UserRole
@@ -44,7 +46,7 @@ def normalize_email(email: str) -> str:
 
 
 def _now() -> datetime:
-    return datetime.now()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _expiry() -> datetime:
@@ -188,22 +190,23 @@ def create_pending_link(
 def resolve_invitations_for_student(db: Session, student: User) -> list[ParentStudentLink]:
     """Attach invitation-only links to a now-verified student account.
 
-    Called on email-verified signup, first login, and Google signup/login. Only
-    ``student_id`` is set -- the link stays ``pending``, so the student still has
-    to approve before the parent sees anything.
+    Legacy explicit resolution only: auth no longer calls this helper. Only
+    unexpired pending invitations may attach, and none are activated.
     """
     normalized = normalize_email(student.email)
-    if not normalized:
+    if not normalized or student.role != UserRole.STUDENT or not student.is_active:
         return []
 
     rows = list(
         db.scalars(
             select(ParentStudentLink).where(
                 ParentStudentLink.student_id.is_(None),
-                ParentStudentLink.invited_email == normalized,
+                func.lower(func.trim(ParentStudentLink.invited_email)) == normalized,
+                ParentStudentLink.status == LinkStatus.PENDING,
             )
         )
     )
+    rows = [link for link in rows if not link.is_expired]
     if not rows:
         return []
 
@@ -217,26 +220,39 @@ def resolve_invitations_for_student(db: Session, student: User) -> list[ParentSt
 
 
 def approve_link(db: Session, link: ParentStudentLink) -> ParentStudentLink:
-    """Student approves: pending -> active, granting the default scopes."""
-    if link.status == LinkStatus.ACTIVE:
-        return link
-    link.status = LinkStatus.ACTIVE
-    link.confirmed_at = _now()
-    link.revoked_at = None
-    if not isinstance(link.scopes, dict) or not link.scopes:
-        link.scopes = dict(DEFAULT_LINK_SCOPES)
-    db.commit()
+    """Student approval accepts only an unexpired, attached pending link."""
+    try:
+        db.refresh(link, with_for_update=True)
+        if link.status != LinkStatus.PENDING:
+            raise HTTPException(status_code=409, detail="Only pending links can be approved")
+        if link.is_expired:
+            raise HTTPException(status_code=410, detail="Invitation has expired")
+        if link.student_id is None:
+            raise HTTPException(status_code=409, detail="Invitation is not attached to a student")
+        link.status = LinkStatus.ACTIVE
+        link.confirmed_at = _now()
+        link.activated_at = link.confirmed_at
+        link.activation_source = "student_approved"
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(link)
     return link
 
 
 def revoke_link(db: Session, link: ParentStudentLink) -> ParentStudentLink:
     """Student (or parent) revokes: access ends immediately."""
-    if link.status == LinkStatus.REVOKED:
-        return link
-    link.status = LinkStatus.REVOKED
-    link.revoked_at = _now()
-    db.commit()
+    try:
+        db.refresh(link, with_for_update=True)
+        if link.status == LinkStatus.REVOKED:
+            return link
+        link.status = LinkStatus.REVOKED
+        link.revoked_at = _now()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(link)
     return link
 

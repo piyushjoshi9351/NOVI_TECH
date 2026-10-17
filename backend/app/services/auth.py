@@ -1,11 +1,13 @@
 import hashlib
 import hmac
 import secrets
+from datetime import datetime, timezone
 from urllib.parse import quote, unquote, urlencode
 
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core import security
@@ -19,8 +21,8 @@ from app.schemas.auth import (
     UserUpdate,
     validate_image_data_url,
 )
-from app.services import parent_links
-from app.services.providers import memory
+from app.schemas.passwords import validate_new_password
+from app.services.parent_students import _duplicate_email
 
 
 def _clean_link(link: dict) -> dict:
@@ -34,81 +36,36 @@ def _clean_link(link: dict) -> dict:
 
 
 async def signup(data: SignupRequest, db: Session) -> User:
-    """Student self-registration. Always creates role='student'."""
-    existing = db.scalar(select(User).where(User.email == data.email.lower()))
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    """Retained for old callers, but public student creation is disabled."""
+    raise HTTPException(status_code=403, detail="Students must be created by a parent")
 
+
+def register_parent(data: ParentRegisterRequest, db: Session) -> User:
+    """Create only a parent. Child setup is resumable after authentication."""
     user = User(
         email=data.email.lower(),
-        password_hash=security.hash_password(data.password),
-        # Hard-coded: this route is for students only. Parent accounts are
-        # created by register_parent(), which also opens the consent link.
-        # SignupRequest rejects role='parent' at validation, so a client cannot
-        # reach this branch to escalate.
-        role=UserRole.STUDENT,
-        first_name=data.name or data.first_name,
-        last_name=data.last_name,
-        grade=data.grade,
-        school=data.school,
+        password_hash=security.hash_password(data.password.get_secret_value()),
+        role=UserRole.PARENT,
+        first_name=data.name,
     )
-    db.add(user)
-    db.commit()
+    try:
+        db.add(user)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if _duplicate_email(exc):
+            raise HTTPException(status_code=409, detail="Email already registered") from None
+        raise
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(user)
-
-    if user.role == UserRole.STUDENT:
-        try:
-            agent_id = memory.ensure_agent(
-                user_id=user.id, name=user.display_name, grade=user.grade,
-                school=user.school or None, existing=None,
-            )
-            if agent_id:
-                user.letta_agent_id = agent_id
-                db.commit()
-        except Exception as exc:
-            print(f"[auth] agent creation skipped: {exc}")
-
-    # A parent may have invited this email before the account existed.
-    parent_links.resolve_invitations_for_student(db, user)
     return user
 
 
-def register_parent(data: ParentRegisterRequest, db: Session) -> tuple[User, "parent_links.ParentStudentLink"]:
-    """Self-service parent registration, plus the initial student invitation.
-
-    The role is fixed to PARENT here on the server; a client cannot choose it.
-    One email is one role: an existing account of either kind is rejected rather
-    than converted.
-    """
-    email = data.email.lower()
-    existing = db.scalar(select(User).where(User.email == email))
-    if existing:
-        if existing.role == UserRole.STUDENT:
-            raise HTTPException(
-                status_code=400,
-                detail="That email is already registered as a student. Sign in as the student instead.",
-            )
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = User(
-        email=email,
-        password_hash=security.hash_password(data.password),
-        role=UserRole.PARENT,
-        first_name=data.name or data.first_name,
-        last_name=data.last_name,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    # Parents never get a Letta agent.
-    link = parent_links.create_pending_link(db, user, data.student_email)
-    return user, link
-
-
 def login(data: LoginRequest, db: Session) -> User:
-    user = db.scalar(select(User).where(User.email == data.email.lower()))
-    if not user or not security.verify_password(data.password, user.password_hash):
+    user = db.scalar(select(User).where(User.email == data.email.lower()).with_for_update())
+    if not user or user.has_local_password is False or not security.verify_password(data.password.get_secret_value(), user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
@@ -120,9 +77,17 @@ def login(data: LoginRequest, db: Session) -> User:
             detail=f"This account is a {user.role} account. Sign in from the {user.role} sign-in page.",
         )
 
-    # First (and every) password login is a chance to claim a pending invitation.
-    if user.role == UserRole.STUDENT:
-        parent_links.resolve_invitations_for_student(db, user)
+    # A successful password login is reliable evidence for legacy provenance.
+    try:
+        user.has_local_password = True
+        if user.first_login_at is None:
+            user.first_login_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(user)
+    # Authentication must not claim or activate legacy email invitations.
     return user
 
 
@@ -141,6 +106,9 @@ def me(user: User) -> MeResponse:
         profile_photo=user.profile_photo,
         banner_photo=user.banner_photo,
         onboarding_completed=user.onboarding_completed,
+        must_change_password=user.must_change_password,
+        has_local_password=user.has_local_password,
+        needs_child_setup=user.needs_child_setup,
     )
 
 
@@ -173,10 +141,28 @@ def update_profile(user: User, data: UserUpdate, db: Session) -> User:
 
 
 def change_password(user: User, current_password: str, new_password: str, db: Session) -> User:
-    if not security.verify_password(current_password, user.password_hash):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-    user.password_hash = security.hash_password(new_password)
-    db.commit()
+    try:
+        validate_new_password(new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    try:
+        # Serialize concurrent changes so the version never increments from a
+        # stale snapshot and only the current password can authorize replacement.
+        db.refresh(user, with_for_update=True)
+        if user.has_local_password is False:
+            raise HTTPException(status_code=400, detail="Use Google to sign in; this account has no local password")
+        if not security.verify_password(current_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        if security.verify_password(new_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Choose a different password")
+        user.password_hash = security.hash_password(new_password)
+        user.has_local_password = True
+        user.must_change_password = False
+        user.token_version += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(user)
     return user
 
@@ -242,8 +228,8 @@ async def google_login(
 ) -> tuple[User, bool]:
     """Exchange a Google authorization code and log the user in (creating them if needed).
 
-    Returns (user, is_new). ``intent`` decides the role of a NEWLY created
-    account only -- an existing account is never switched roles by Google sign-in.
+    Returns (user, is_new). Only parent intent can create an unknown account;
+    Google sign-in never changes the role of an existing account.
     """
     token_payload = await _exchange_google_code(code)
     info = await _verify_google_id_token(token_payload.get("id_token", ""))
@@ -291,44 +277,54 @@ async def _verify_google_id_token(id_token: str) -> dict:
 def _upsert_google_user(
     email: str, name: str, picture: str | None, db: Session, intent: str = "student"
 ) -> tuple[User, bool]:
-    user = db.scalar(select(User).where(User.email == email))
+    user = db.scalar(select(User).where(User.email == email).with_for_update())
     if user:
-        if picture and not user.avatar:
-            user.avatar = picture
+        try:
+            if not user.is_active:
+                raise HTTPException(status_code=403, detail="Account is disabled")
+            # Verified Google sign-in takes ownership of a temporary-password
+            # account. Revoke the parent's known password and every earlier JWT
+            # together, before the callback can issue an unrestricted token.
+            if user.role == UserRole.STUDENT and user.must_change_password:
+                user.password_hash = security.hash_password(secrets.token_urlsafe(48))
+                user.has_local_password = False
+                user.must_change_password = False
+                user.token_version += 1
+            if user.first_login_at is None:
+                user.first_login_at = datetime.now(timezone.utc)
+            if picture and not user.avatar:
+                user.avatar = picture
             db.commit()
-            db.refresh(user)
-        if user.role == UserRole.STUDENT:
-            # Google has verified this address, so any outstanding invitation
-            # can be attached now.
-            parent_links.resolve_invitations_for_student(db, user)
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(user)
         return user, False
 
-    # One email is one role: only a NEW account may take the requested role.
-    role = UserRole.PARENT if intent == "parent" else UserRole.STUDENT
+    if intent != "parent":
+        raise HTTPException(status_code=403, detail="Students must be created by a parent")
     parts = (name or "").strip().split()
     user = User(
         email=email,
         password_hash=security.hash_password(secrets.token_urlsafe(24)),  # no password login for Google accounts
-        role=role,
+        has_local_password=False,
+        first_login_at=datetime.now(timezone.utc),
+        role=UserRole.PARENT,
         first_name=parts[0] if parts else "",
         last_name=" ".join(parts[1:]) if len(parts) > 1 else "",
         avatar=picture or None,
     )
-    db.add(user)
-    db.commit()
+    try:
+        db.add(user)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if _duplicate_email(exc):
+            raise HTTPException(status_code=409, detail="Email already registered") from None
+        raise
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(user)
 
-    if role == UserRole.STUDENT:
-        try:
-            agent_id = memory.ensure_agent(
-                user_id=user.id, name=user.display_name, grade=user.grade,
-                school=user.school or None, existing=None,
-            )
-            if agent_id:
-                user.letta_agent_id = agent_id
-                db.commit()
-        except Exception as exc:
-            print(f"[auth] google agent creation skipped: {exc}")
-
-        parent_links.resolve_invitations_for_student(db, user)
     return user, True

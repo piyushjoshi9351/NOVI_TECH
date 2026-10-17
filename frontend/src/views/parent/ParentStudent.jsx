@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, esc, prettyDate, PP_CATS, ringColor, safeHttpUrl } from "../../api";
-import { scopeMeta } from "../../parentAccess";
+import { accountState, scopeMeta } from "../../parentAccess";
 import { EmptyState, Pill, showLoader } from "../../ui";
 import { ParentAvatar } from "./ParentAvatar";
 
@@ -127,12 +127,12 @@ export default function ParentStudent({ studentId }) {
       <div className="pd-wrap">
         <div className="pd-hero">
           <div className="eyebrow">Parent space</div>
-          <h1>No children shared yet</h1>
+          <h1>No connected child accounts</h1>
           <p>
-            Nothing to show until a student approves your request. You&apos;ll see their
-            progress here once they do, and only the sections they choose to share.
+            Create a child account to connect basic progress immediately. Older pending
+            connections remain pending; removed connections do not grant access.
           </p>
-          <Link href="/parent" className="btn pd-hero-btn">Request access</Link>
+          <Link href="/parent/add-child" className="btn pd-hero-btn">Add child</Link>
         </div>
       </div>
     );
@@ -141,6 +141,7 @@ export default function ParentStudent({ studentId }) {
   const name = esc(link.student?.first_name || "Your child");
   const grade = num(link.student?.grade);
   const pending = links.filter((l) => l.status === "pending").length;
+  const lifecycle = accountState(link);
 
   return (
     <div className="dash-wrap pd-wrap">
@@ -158,7 +159,7 @@ export default function ParentStudent({ studentId }) {
           <h1 className="dash-hi">{name}</h1>
           <p className="dash-sub">
             {pending
-              ? `${pending} request${pending === 1 ? "" : "s"} awaiting approval. `
+              ? `${pending} legacy pending connection${pending === 1 ? "" : "s"}. `
               : ""}
             Sharing {scopes.map((s) => scopeMeta(s)?.label || s).join(", ").toLowerCase()}.
           </p>
@@ -167,6 +168,11 @@ export default function ParentStudent({ studentId }) {
           <Link href="/parent" className="btn btn-ghost">← My Children</Link>
         </div>
       </div>
+
+      <section className="card mb" role="status">
+        <h2>{lifecycle.label}</h2>
+        <p className="small muted">{lifecycle.detail}</p>
+      </section>
 
       {/* Child switcher: one pill per child, same component as the student's
           header chips, so switching reads as a filter rather than a mode. */}
@@ -373,8 +379,9 @@ function NotShared({ scope, name, tab }) {
       <div className="pd-notshared-ico" aria-hidden="true">🔒</div>
       <h3>{esc(name)} hasn&apos;t shared {tab ? `their ${tab.toLowerCase()}` : "this"}</h3>
       <p className="small muted">
-        {meta?.blurb || "This section isn't shared with you."} They can change this any
-        time from their own Parent access settings.
+          Basic progress is connected when the account is created. {meta?.blurb || "This additional section is not shared."}
+          {" "}{name} can enable this section from Parent access settings after sign-in
+          setup. Their chats, check-in text and private memory stay private.
       </p>
     </div>
   );

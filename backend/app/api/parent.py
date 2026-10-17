@@ -30,29 +30,38 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_parent, get_authorized_link
+from app.core.rate_limit import IpRateLimiter, RateLimiter
+from app.core.validation import SensitiveRequestRoute
 from app.models.user import User
 from app.schemas.parent import (
     InsightsResponse,
     MemoryResponse,
     OverviewResponse,
     ParentLinkOut,
-    ParentLinkCreated,
     ParentLinkList,
+    ParentStudentCreate,
+    ParentStudentCreated,
     ParentStudentRef,
-    StudentLinkRequest,
 )
-from app.services import parent_insight, parent_links, parent_memory, parent_projection
-from app.services.parent_links import GENERIC_INVITE_MESSAGE
+from app.services import parent_insight, parent_links, parent_memory, parent_projection, parent_students
 
 logger = logging.getLogger("novi.parent_api")
 
 router = APIRouter(prefix="/parent", tags=["parent"])
+student_creation_router = APIRouter(route_class=SensitiveRequestRoute)
+student_creation_limiter = IpRateLimiter(limit=10)
+parent_creation_limiter = RateLimiter(limit=10)
 
 NO_STORE = {"Cache-Control": "no-store"}
 
 # The subset of the data-URL types accepted on write (see
 # `schemas.auth.validate_image_data_url`) that we will echo back as an image.
 _PHOTO_MIME = re.compile(r"^data:(image/(?:png|jpeg|jpg|gif|webp));base64$")
+
+
+def _creation_parent(parent: User = Depends(get_current_parent)) -> User:
+    parent_creation_limiter.check(str(parent.id))
+    return parent
 
 
 @router.get("/students", response_model=ParentLinkList)
@@ -70,23 +79,35 @@ def list_my_students(
     return {"links": payload}
 
 
-@router.post("/links", response_model=ParentLinkCreated, status_code=201)
-def request_link(
-    data: StudentLinkRequest,
-    parent: User = Depends(get_current_parent),
+@student_creation_router.post(
+    "/students",
+    response_model=ParentStudentCreated,
+    status_code=201,
+    dependencies=[Depends(student_creation_limiter)],
+)
+def create_student(
+    data: ParentStudentCreate,
+    response: Response,
+    parent: User = Depends(_creation_parent),
     db: Session = Depends(get_db),
 ):
-    """Ask to follow a student.
+    """Create a student and this parent's active link in one transaction."""
+    receipt = parent_students.create_student(db, parent, data)
+    response.headers.update(NO_STORE)
+    return receipt
 
-    Always returns the same generic message whether or not the email belongs to
-    an existing student, so this cannot be used to test whether an email is
-    registered.
-    """
-    link = parent_links.create_pending_link(db, parent, data.student_email, label=data.label)
-    return ParentLinkCreated(
-        link_id=link.id,
-        status=link.status.value,
-        message=GENERIC_INVITE_MESSAGE,
+
+router.include_router(student_creation_router)
+
+
+@router.post("/links", deprecated=True)
+def request_link(
+    parent: User = Depends(get_current_parent),
+):
+    """Retired email-link flow; existing links are left untouched."""
+    raise HTTPException(
+        status_code=410,
+        detail="Access requests are retired. Create a child with POST /api/v1/parent/students",
     )
 
 
@@ -98,7 +119,17 @@ def _link_out(link) -> ParentLinkOut:
     """
     is_active = getattr(link.status, "value", link.status) == "active"
     ref = None
+    account_state = None
     if is_active and link.student is not None:
+        student = link.student
+        if student.onboarding_completed:
+            account_state = "active"
+        elif student.created_by_parent_id is not None and student.first_login_at is None:
+            account_state = "awaiting_first_login"
+        elif student.first_login_at is None:
+            account_state = "account_created"
+        else:
+            account_state = "onboarding_in_progress"
         ref = ParentStudentRef(
             first_name=link.student.first_name or "",
             grade=link.student.grade,
@@ -109,6 +140,7 @@ def _link_out(link) -> ParentLinkOut:
         label=link.label or "",
         scopes=link.scope_names,
         student=ref,
+        account_state=account_state,
         # Same gate as `student`: only an active link discloses the id.
         student_id=link.student_id if (is_active and link.student is not None) else None,
         # Never echo the full invited address back to the requester.

@@ -9,8 +9,8 @@ class UserRole(str, enum.Enum):
 class LinkStatus(str, enum.Enum):
     """Lifecycle of a parent -> student link.
 
-    A link is NEVER auto-activated: it starts PENDING and only the student can
-    move it to ACTIVE (approve) or REVOKED.
+    Legacy requests start PENDING and require student approval. A parent-created
+    student starts with an ACTIVE link and explicit activation provenance.
     """
 
     PENDING = "pending"

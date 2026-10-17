@@ -29,6 +29,9 @@ class RoleBase(ORMModel):
     onboarding_step: str | None = None
     onboarding_completed_at: datetime | None = None
     onboarding_completed: bool = False
+    must_change_password: bool = False
+    has_local_password: bool | None = None
+    needs_child_setup: bool = False
 
 
 def dt_or_none(value: datetime | None) -> str | None:

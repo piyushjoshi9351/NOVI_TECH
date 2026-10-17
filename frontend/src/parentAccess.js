@@ -1,73 +1,34 @@
-/* ------------------------------------------------------------------ *
- * Shared bits of the parent-linking contract.
- *
- * The backend is the authority: these constants only mirror what it returns so
- * the two auth screens and both areas render the same wording.
- * ------------------------------------------------------------------ */
-
-/** MUST match app/services/parent_links.py:GENERIC_INVITE_MESSAGE.
- *  Shown whether or not the student actually has an account — it must never
- *  reveal which, or the form becomes an account-enumeration oracle. */
-export const GENERIC_INVITE_MESSAGE =
-  "If this student has a Novi account, we've sent them a request";
-
-/** Where a freshly authenticated user belongs, keyed by the role /auth/me
- *  reports (never by the tab they picked on the login screen). */
-export const homeForRole = (role, onboardingCompleted) =>
-  role === "parent" ? "/parent" : onboardingCompleted ? "/dashboard" : "/onboarding";
-
-/** Scope ids are the backend's. "basic" can never be switched off.
- *
- *  The id stays `memory` on purpose: it is the key already stored on every
- *  existing consent, so renaming the id would silently revoke it. Only the
- *  human-facing label changed -- "Long-term memory" promised a summary and
- *  highlights, which is exactly what the backend used to hand over from Letta
- *  (LLM-written paraphrases of the student's own conversations). What it
- *  actually serves now is milestones and a confidence trend from the student's
- *  own growth tables. The wording below describes that, so the consent the
- *  student gives is the consent they actually get. */
+/** Relationship states and scope labels shared by parent/student screens. */
 export const SCOPES = [
-  {
-    id: "basic",
-    label: "Basic overview",
-    blurb: "Their grade, current focus, goals, passport counts and journey stage.",
-    locked: true,
-  },
-  {
-    id: "insights",
-    label: "Insights",
-    blurb:
-      "Interests, strengths and career areas Novi has spotted — plus the passport " +
-      "entries they've added, including what they've written about them.",
-    locked: false,
-  },
-  {
-    id: "memory",
-    label: "Growth history",
-    blurb: "Milestones they've completed and how their confidence has changed. Not their conversations or anything they tell Novi in private.",
-    locked: false,
-  },
+  { id: "basic", label: "Basic overview", blurb: "Basic identity and progress, goals, passport counts and journey stage. Included while the parent link is active.", locked: true },
+  { id: "insights", label: "Insights", blurb: "Structured interests, strengths, career areas and parent-safe passport summaries. Private chat evidence is excluded.", locked: false },
+  { id: "memory", label: "Growth history", blurb: "Completed milestones and confidence trends. Chats, check-in text and Letta memory stay private.", locked: false },
 ];
 
-export const scopeMeta = (id) => SCOPES.find((s) => s.id === id);
+export const scopeMeta = (id) => SCOPES.find((scope) => scope.id === id);
+export const isPending = (link) => link?.status === "pending";
+export const isActive = (link) => link?.status === "active";
+export const isRevoked = (link) => link?.status === "revoked";
+export const isParentCreated = (link) => link?.activation_source === "parent_created";
 
-/** A link the student hasn't answered yet. */
-export const isPending = (link) => link && link.status === "pending";
-export const isActive = (link) => link && link.status === "active";
-export const isRevoked = (link) => link && link.status === "revoked";
-
-/** Best available name for a link. The backend hides student details until a
- *  link is active, so a pending row can legitimately have no name at all. */
 export function linkName(link) {
-  if (!link) return "your child";
-  if (link.student && link.student.first_name) return link.student.first_name;
-  if (link.invited_email_first_name) return link.invited_email_first_name;
-  if (link.label && link.label.toLowerCase() !== "child") return link.label;
+  if (link?.student?.first_name) return link.student.first_name;
+  if (link?.invited_email_first_name) return link.invited_email_first_name;
+  if (link?.label && link.label.toLowerCase() !== "child") return link.label;
   return "Your child";
 }
 
-/** "Waiting for <student> to approve" */
-export const pendingHeadline = (link) => `Waiting for ${linkName(link)} to approve`;
-
+export const pendingHeadline = () => "Legacy pending connection";
 export const STATUS_TONE = { active: "good", pending: "warn", revoked: "bad" };
-export const STATUS_LABEL = { active: "Connected", pending: "Awaiting approval", revoked: "Disconnected" };
+export const STATUS_LABEL = { active: "Connected", pending: "Legacy pending", revoked: "Access removed" };
+
+export const ACCOUNT_STATES = {
+  account_created: { label: "Account created", detail: "The account is connected. Setup history is limited; progress appears as your child continues with Novi." },
+  awaiting_first_login: { label: "Awaiting first login", detail: "The account is created and basic sharing is connected. Give your child their email and temporary password so they can sign in." },
+  onboarding_in_progress: { label: "Onboarding in progress", detail: "Your child has signed in and is completing password setup or onboarding. Their progress will appear as they get started." },
+  active: { label: "Active", detail: "Your child has completed onboarding. This view follows their current sharing settings." },
+};
+
+export function accountState(link) {
+  return ACCOUNT_STATES[link?.account_state] || ACCOUNT_STATES.account_created;
+}

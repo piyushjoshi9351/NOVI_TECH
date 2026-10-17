@@ -35,7 +35,11 @@ Signup → Complete profile → Build Career DNA → Discover careers → Set a 
 
 | # | Step | Endpoint | Screen | What makes it "done" |
 |---|---|---|---|---|
-| 1 | Sign up | `POST /auth/signup` | auth | Account + agent created; school/grade captured; Letta human block seeded |
+| 1a | Parent signs up | `POST /auth/parent/register` | Parent signup | Parent JWT + `needs_child_setup`; name/email/password only (or Google) |
+| 1b | Parent adds child | `POST /parent/students` | Add child | Student + active basic link in one transaction; temporary password; parent session unchanged |
+| 1c | Child signs in | `POST /auth/login` | Student login | Existing student JWT; temporary accounts restricted server-side |
+| 1d | Child chooses personal password | `POST /auth/change-password` | First login | Different password, replacement JWT, old token/version invalidated |
+| 1e | Student onboarding | `GET /onboarding/flow`, `POST /onboarding/flow/answer` | Onboarding | Parent-entered name prefilled; complete the existing 15-step engine |
 | 2 | Complete profile | `PATCH /auth/me` | Profile | first_name + school + grade set |
 | 3 | Build Career DNA | `GET/PATCH /dna`, `POST /dna/refresh`, `POST /dna/reflect` | My DNA | `dna_filled = true`; reflection confirmed with "Yes, that's me" |
 | 4 | Discover careers | `POST /careers/match` | Careers | ≥1 stored `CareerMatch`; top match archived to memory |
@@ -55,7 +59,8 @@ progress %, career matches, goals, roadmap, priorities, passport and check-in st
 
 ### 1 · Homepage / brand promise
 - **Auth screen hero** renders the brand promise: *"Your AI mentor. Your journey. Your future."*
-- **Endpoint**: `POST /auth/login`, `POST /auth/signup`, `GET /auth/me`
+- **Endpoints**: `POST /auth/parent/register`, `POST /auth/login`, `GET /auth/me`
+- Signup is for parents. Students log into accounts their parents created; existing student logins continue working.
 - **Trust indicators** ("Personalized AI Mentor · 4-Year Journey · Career + University Guidance") = the product itself: memory (§5), roadmap stages (§9), DNA/readiness (§§8,7).
 
 ### 2 · How Novi works — the 4-year journey
@@ -151,7 +156,8 @@ progress %, career matches, goals, roadmap, priorities, passport and check-in st
   calm, concrete, constructive, non-intrusive.
 
 ### 15 · Final CTA
-- Auth screen is the single entry; "Start Your Journey" = create account (<5 min, no credit card).
+- Parent signup and student login share form logic. Registration leads to Add child;
+  student login leads to password change if required, then onboarding, then the student home.
 
 ### 16 · Novi's voice
 - Encoded in `NOVI_PERSONA` (`backend/app/llm/prompts.py`): friendly, smart-but-never-complicated,
@@ -192,32 +198,42 @@ output even at 0 Gemini quota.
 
 - [x] All 18 spec sections implemented and mapped (above)
 - [x] 25+ live API endpoints across 12 routers (see `/docs`, OpenAPI)
-- [x] 8-step onboarding flow with dashboard journey card
+- [x] 15-step student onboarding engine and dashboard journey progress card
 - [x] Career detail: AI fit statement + 3 linked next steps
 - [x] DNA reflection feedback ("Yes, that's me" / "Not quite")
 - [x] RSS-style memory: every feature writes to the 4-year Letta memory; `/memory` timeline
 - [x] Gemini outage-safe: Ollama fallback proven with quota simulated at 0
-- [x] All 9 product views smoke-tested headless (0 JS errors), same theme
-- [x] Full API integration suite green; memory timeline populated for test student
+- [ ] Live browser smoke of the current parent-first flow on the deployment target
+- [x] Parent-first backend chain verified in isolated tests; MySQL legacy migration rehearsed
+- [ ] Provider credentials and HTTPS Google callback checked in the target environment
 
 ---
 
 ## 6. Run & verify
 
-```bash
-# backend (already running on :8000)
-cd backend && nohup ../venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > /tmp/novi_backend.log 2>&1 &
+See [SETUP.md](SETUP.md) for local/Docker setup, test commands and the deployment
+order: back up DB -> run migrations -> deploy backend -> deploy frontend.
+The app runs on Next.js port 3000; API docs are on FastAPI port 8000.
+Do not use published/shared demo credentials; create a disposable family for testing.
 
-# prerequisites
-Ollama:   ollama serve  (llama3.2:3b must be pulled)
-Letta:    letta serve   (http://localhost:8283)
-```
+### Auth and sharing contract
 
-Test credentials: `student@novi.app` / `Novi@12345` · `prateekkushwaha868@gmail.com` / `Novi@12345`
-
-- API health: `GET /api/v1/health` → `{"status":"healthy","memory":"letta"}`
-- API docs: `http://localhost:8000/docs`
-- App: `http://localhost:8000`
+- Passwords: minimum 8 characters, maximum 72 UTF-8 bytes. No plaintext password
+  appears in child responses or is persisted by the frontend.
+- Identity includes `must_change_password`, `needs_child_setup`, and
+  `has_local_password`. Google-only/unknown local-password provenance hides the
+  local change form. A verified Google login invalidates a parent-set temporary
+  credential and old tokens before onboarding.
+- New public student signup is disabled. Google cannot auto-create students.
+  Existing student/Google accounts and legacy link choices are preserved.
+- Legacy creation endpoints return 410. Legacy pending approval is allowed only
+  explicitly, before invitation expiry; revoked links cannot be reactivated.
+- `token_version=0` is the migration default; legacy unversioned JWTs mean 0.
+  Existing users are not forced through a first-login password reset.
+- `TRUSTED_PROXY_HOSTS` defaults empty; only configured proxy peers may supply
+  forwarded client IPs. Login/signup/child creation are rate-limited in memory,
+  per process; multiple workers require shared/ingress enforcement.
+- No parent endpoint or advisor gets raw chats, check-in text or Letta memory.
 
 ## 7. Key files
 

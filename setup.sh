@@ -237,7 +237,7 @@ run_backend() {
   local py
   py="$(venv_python)"
   log "Starting NOVI backend on http://localhost:8000  (Ctrl-C to stop)"
-  (cd "$BACKEND_DIR" && exec "$py" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000)
+  (cd "$BACKEND_DIR" && exec "$py" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-proxy-headers)
 }
 
 banner

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import get_current_student
 from app.models.user import User
+from app.models.enums import LinkStatus
 from app.schemas.parent import (
     ScopeUpdate,
     StudentLinkList,
@@ -41,6 +42,9 @@ def _to_out(link) -> StudentLinkOut:
         label=link.label or "",
         scopes=link.scope_names,
         parent_name=(parent.display_name if parent else "") or "",
+        activation_source=link.activation_source,
+        can_manage=link.student_id is not None,
+        can_approve=link.student_id is not None and link.status == LinkStatus.PENDING and not link.is_expired,
         created_at=link.created_at,
         expires_at=link.expires_at,
     )
@@ -51,17 +55,10 @@ def list_parent_links(
     student: User = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
-    """Every parent request against this student, pending and active alike.
-
-    Revoked links are excluded -- once withdrawn, a student should not keep
-    seeing it in their list.
-    """
-    from app.models.enums import LinkStatus
-
+    """The student's own relationships, including legacy pending/revoked rows."""
     links = [
         _to_out(link)
         for link in parent_links.links_for_student(db, student)
-        if link.status != LinkStatus.REVOKED
     ]
     return StudentLinkList(links=links)
 
@@ -72,7 +69,7 @@ def approve_parent_link(
     student: User = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
-    """Consent: pending -> active. This is the only way a parent gains access."""
+    """Student approval of an unexpired legacy pending request."""
     link = _require_own_link(db, student, link_id)
     parent_links.approve_link(db, link)
     return _to_out(link)

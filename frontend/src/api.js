@@ -4,10 +4,23 @@
  * in-flight dedupe and write-based invalidation.
  * ------------------------------------------------------------------ */
 
+import { safeNext, setupPath, withNext } from "./authFlow.js";
+
 export const API = "/api/v1";
+export const SESSION_EXPIRED = "novi:session-expired";
 
 let _token = null;
-export function setApiToken(t) { _token = t; }
+let _identity = null;
+let _expired = false;
+export function setApiToken(t) {
+  if (t !== _token) {
+    _identity = null;
+    resetWarmAll();
+    if (t) _expired = false;
+  }
+  _token = t;
+}
+export function setApiIdentity(user) { _identity = user; }
 export function getApiToken() {
   if (_token === null && typeof window !== "undefined") _token = window.localStorage.getItem("novi_token");
   return _token;
@@ -26,6 +39,27 @@ function _headers() {
 
 export function clearApiCache() { _apiCache.clear(); _apiInflight.clear(); _apiGen++; }
 
+function expireSession(requestToken, path) {
+  // Login's 401 means invalid credentials. A delayed 401 from a replaced JWT
+  // must not sign out the current session, including password-change races.
+  if (["/auth/login", "/auth/signup", "/auth/parent/register"].includes(path)
+      || requestToken !== getApiToken() || _expired) return;
+  _expired = true;
+  _token = null;
+  _identity = null;
+  resetWarmAll();
+  clearApiCache();
+  revokeImageUrls();
+  refreshDnaContext();
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem("novi_token");
+  window.localStorage.removeItem("novi_user");
+  window.dispatchEvent(new Event(SESSION_EXPIRED));
+  if (!["/login", "/signup"].includes(window.location.pathname)) {
+    window.location.replace(withNext("/login", safeNext(window.location.pathname + window.location.search)));
+  }
+}
+
 const _blobUrls = new Map();
 
 /* Binary counterpart to `api`. Returns an object URL for an image endpoint,
@@ -35,8 +69,12 @@ const _blobUrls = new Map();
 export function apiImage(path) {
   if (_blobUrls.has(path)) return _blobUrls.get(path);
   if (!getApiToken()) return null;
+  const requestToken = getApiToken();
   const p = fetch(API + path, { headers: _headers(), signal: AbortSignal.timeout(30000) })
-    .then((res) => (res.ok ? res.blob() : null))
+    .then((res) => {
+      if (res.status === 401) expireSession(requestToken, path);
+      return res.ok ? res.blob() : null;
+    })
     .then((blob) => (blob ? URL.createObjectURL(blob) : null))
     .catch(() => null);
   _blobUrls.set(path, p);
@@ -52,8 +90,12 @@ export function revokeImageUrls() {
 
 function _revalidate(path, opts, key) {
   const gen = _apiGen;
+  const requestToken = getApiToken();
   const p = fetch(API + path, { ...opts, headers: _headers() })
-    .then((r) => (r.ok ? r.json() : null))
+    .then((r) => {
+      if (r.status === 401) expireSession(requestToken, path);
+      return r.ok ? r.json() : null;
+    })
     .then((d) => { if (d !== null && gen === _apiGen) _apiCache.set(key, { data: d, ts: Date.now() }); })
     .catch(() => {});
   _apiInflight.set(key, p);
@@ -82,7 +124,9 @@ export async function api(path, opts = {}) {
   const gen = _apiGen;
   const { fresh: _ignored, ...fetchOpts } = opts;
   const run = async () => {
+    const requestToken = getApiToken();
     const res = await fetch(API + path, { ...fetchOpts, signal: opts.signal || AbortSignal.timeout(110000), headers: _headers() });
+    if (res.status === 401) expireSession(requestToken, path);
     let data = null;
     try { data = await res.json(); } catch (_) {}
     if (!res.ok) {
@@ -117,16 +161,20 @@ export async function api(path, opts = {}) {
  */
 export async function streamChat({ message, conversation_id = null, signal, onEvent }) {
   clearApiCache(); // a conversation is about to change — drop cached GETs
+  const requestToken = getApiToken();
   const res = await fetch(API + "/chat/stream", {
     method: "POST",
     headers: { ..._headers(), Accept: "text/event-stream" },
     body: JSON.stringify({ message, conversation_id }),
     signal,
   });
+  if (res.status === 401) expireSession(requestToken, "/chat/stream");
   if (!res.ok || !res.body) {
     let detail = `Request failed (${res.status})`;
     try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) {}
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = res.status;
+    throw error;
   }
 
   const reader = res.body.getReader();
@@ -211,32 +259,47 @@ const ROUTE_WARM = {
   roadmap: ["/roadmap/tasks", "/roadmap/goals", "/roadmap/priorities", "/roadmap", "/dna/context"],
   passport: ["/passport", "/passport/completion", "/dna/context"],
   checkin: ["/checkins/current", "/checkins", "/checkins/graph", "/checkins/planner/day", "/dna/context"],
-  overview: ["/parents/dashboard"],
   parent: ["/parent/students"],
-  profile: ["/auth/me", "/dna", "/auth/links"],
+  advisor: ["/parent/students"],
+  "parent/add-child": [],
+  "parent/settings": ["/auth/me"],
+  profile: ["/auth/me", "/dna", "/student/parent-links"],
 };
 
 let _warmAllStarted = false;
-export function resetWarmAll() { _warmAllStarted = false; }
+let _warmTimer = null;
+let _warmGeneration = 0;
+export function resetWarmAll() {
+  _warmAllStarted = false;
+  _warmGeneration++;
+  clearTimeout(_warmTimer);
+}
+
+const PARENT_ROUTES = new Set(["parent", "advisor", "parent/add-child", "parent/settings"]);
+
+function canWarm(key) {
+  if (!getApiToken() || !_identity || setupPath(_identity)) return false;
+  if (!["parent", "student"].includes(_identity.role)) return false;
+  return _identity.role === "parent" ? PARENT_ROUTES.has(key) : !PARENT_ROUTES.has(key);
+}
 
 export function warmRoute(key) {
-  if (!getApiToken()) return;
+  if (!canWarm(key)) return;
   (ROUTE_WARM[key] || []).forEach((p) => { if (!_apiCache.has("GET " + p)) api(p).catch(() => {}); });
 }
 
-const PARENT_ROUTES = new Set(["parent", "overview"]);
-
-export function warmAllRoutes(role) {
-  if (_warmAllStarted || !getApiToken()) return;
+export function warmAllRoutes() {
+  if (_warmAllStarted || !_identity || setupPath(_identity) || !getApiToken()) return;
   _warmAllStarted = true;
-  const keys = Object.keys(ROUTE_WARM).filter((k) => role !== "parent" || PARENT_ROUTES.has(k));
+  const generation = _warmGeneration;
+  const keys = Object.keys(ROUTE_WARM).filter(canWarm);
   let i = 0;
   const step = () => {
-    if (!getApiToken() || i >= keys.length) return;
+    if (generation !== _warmGeneration || !getApiToken() || i >= keys.length) return;
     warmRoute(keys[i++]);
-    setTimeout(step, 220);
+    _warmTimer = setTimeout(step, 220);
   };
-  setTimeout(step, 500);
+  _warmTimer = setTimeout(step, 500);
 }
 
 /* ------------------------------------------------------------------ consts shared across pages */
@@ -312,7 +375,7 @@ export const PS_NOTIFS = [
   ["checkin_reminders", "Weekly check-in reminders", "A gentle nudge when it's time for your weekly reflection."],
   ["career_alerts", "Career match alerts", "New careers and matches that light up your DNA."],
   ["goal_nudges", "Goal & roadmap nudges", "When a goal is at risk or a roadmap step is due."],
-  ["parent_updates", "Parent progress summary", "A calm monthly summary your parent sees after linking."],
+  ["parent_updates", "Parent progress summary", "A calm monthly summary based on your connected parent's sharing settings."],
   ["digest", "NOVI digest", "A monthly recap of your wins, skills and progress."],
 ];
 

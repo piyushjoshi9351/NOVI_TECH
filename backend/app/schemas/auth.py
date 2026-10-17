@@ -1,9 +1,11 @@
 import re
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.schemas.common import ORMModel, RoleBase, USER_ROLES
+from app.schemas.passwords import ExistingPassword, NewPassword
 
 # Only inline image data URLs are accepted, and only the formats a browser can
 # render in an <img>. Anything else (scripts, remote URLs, svg) is rejected.
@@ -27,18 +29,12 @@ def validate_image_data_url(value: str | None, field: str) -> str | None:
 
 
 class SignupRequest(BaseModel):
-    """Student self-registration. The role is fixed server-side to 'student'.
+    """Compatibility schema for the retired public student-signup service."""
 
-    ``role`` is kept as an accepted field purely for backwards compatibility --
-    both existing frontend signup forms send it -- but the only legal value is
-    ``'student'``. Parent accounts can only be created through
-    ``POST /auth/parent/register`` (or the Google flow with a signed intent), so
-    that invitation/consent state is always set up correctly and a client can
-    never mint a parent by posting to the generic signup route.
-    """
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
+    password: NewPassword
     role: str = "student"
     name: str = ""
     first_name: str = ""
@@ -51,15 +47,17 @@ class SignupRequest(BaseModel):
     def _student_only(cls, v: str) -> str:
         if v != "student":
             raise ValueError(
-                "This endpoint only creates student accounts. "
+                "Public student signup is disabled. "
                 "Use POST /api/v1/auth/parent/register to create a parent."
             )
         return v
 
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     email: EmailStr
-    password: str
+    password: ExistingPassword
     # Optional guard so a parent signing in on the student login form gets a
     # clear error instead of landing in an empty parent account. Optional, so
     # existing clients that send only email/password keep working unchanged.
@@ -73,27 +71,31 @@ class ParentRegisterRequest(BaseModel):
     other unexpected field) is rejected outright rather than silently ignored.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
-    name: str = ""
-    first_name: str = ""
-    last_name: str = ""
-    student_email: EmailStr
+    password: NewPassword
+    name: str = Field(min_length=1, max_length=100)
 
-
-class ParentRegisterResponse(BaseModel):
-    user: RoleBase
-    # The invitation we created, so the UI can show "request sent" immediately.
-    link_id: int
-    message: str
+    @field_validator("name", mode="before")
+    @classmethod
+    def _trim_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: RoleBase
+
+
+class ParentRegisterResponse(TokenResponse):
+    """Authenticated parent identity; child setup is a separate operation."""
+
+
+class PasswordChangeResponse(TokenResponse):
+    status: Literal["ok"] = "ok"
+    detail: str = "Password updated"
 
 
 class MeResponse(BaseModel):
@@ -111,6 +113,9 @@ class MeResponse(BaseModel):
     profile_photo: str | None = None
     banner_photo: str | None = None
     onboarding_completed: bool = False
+    must_change_password: bool = False
+    has_local_password: bool | None = None
+    needs_child_setup: bool = False
 
 
 class UserUpdate(BaseModel):
@@ -128,5 +133,7 @@ class UserUpdate(BaseModel):
 
 
 class PasswordChange(BaseModel):
-    current_password: str = Field(min_length=1)
-    new_password: str = Field(min_length=6, max_length=128)
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    current_password: ExistingPassword
+    new_password: NewPassword

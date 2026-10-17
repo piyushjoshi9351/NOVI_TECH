@@ -7,18 +7,19 @@ import {
   isActive,
   isPending,
   isRevoked,
+  isParentCreated,
 } from "../../parentAccess";
 import { EmptyState, Pill, showLoader, toast } from "../../ui";
 
 /**
  * "Parent access" — the student's side of consent.
  *
- * Nothing here is shared until they press Approve, and they can narrow or widen
- * what each parent sees at any time. `basic` is always on: it is the minimum
+ * Parent-created accounts start connected with basic sharing. Students control
+ * additional sharing and can revoke access. `basic` stays on while connected:
  * needed for a parent account to mean anything, and the backend enforces that
  * too, so the control is shown as fixed rather than as a toggle.
  */
-export default function ParentAccess() {
+export default function ParentAccess({ onLinksChanged }) {
   const [links, setLinks] = useState(null);
   const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
@@ -28,6 +29,7 @@ export default function ParentAccess() {
     const d = await api("/student/parent-links");
     const rows = d?.links || [];
     setLinks(rows);
+    onLinksChanged?.({ links: rows });
     // Seed the toggles from what is actually stored, not from a guess.
     const next = {};
     rows.forEach((l) => {
@@ -35,7 +37,7 @@ export default function ParentAccess() {
       next[l.id] = { insights: s.includes("insights"), memory: s.includes("memory") };
     });
     setDraft(next);
-  }, []);
+  }, [onLinksChanged]);
 
   useEffect(() => {
     let alive = true;
@@ -46,11 +48,11 @@ export default function ParentAccess() {
     return () => { alive = false; };
   }, [load]);
 
-  const approve = async (link) => {
+  const shareLegacy = async (link) => {
+    if (!isPending(link) || isParentCreated(link) || !link.can_approve) return;
     setBusyId(link.id);
     try {
-      // Approve whatever is currently ticked, so toggling then approving is one
-      // action and the parent never gets more than the student has chosen.
+      // Only an explicitly reviewed legacy pending connection uses this API.
       const d = draft[link.id] || {};
       await api(`/student/parent-links/${link.id}/scopes`, {
         method: "PATCH",
@@ -102,15 +104,15 @@ export default function ParentAccess() {
     <>
       <div className="ps-section-head"><span className="ps-eyebrow">Privacy</span></div>
       <p className="ps-intro">
-        You decide who follows your journey and what they can see. Nothing is shared
-        until you approve a request, and you can change or remove it at any time —
-        your chats are never shared.
+        Your parent is connected when they create your account, with basic progress
+        sharing. You control additional sharing and can remove access at any time.
+        Your chats, check-in text and private memory are never shared.
       </p>
 
       {!links.length ? (
         <EmptyState
-          title="No parent requests"
-          sub="When a parent enters your email, their request appears here for you to approve."
+          title="No connected parents"
+          sub="Your parent connections and sharing controls appear here. Removing access does not delete your student account."
         />
       ) : null}
 
@@ -121,7 +123,8 @@ export default function ParentAccess() {
           draft={draft[link.id] || {}}
           busy={busyId === link.id}
           onToggle={(next) => setDraft((d) => ({ ...d, [link.id]: next }))}
-          onApprove={() => approve(link)}
+          onShareLegacy={() => shareLegacy(link)}
+          onRevoke={() => revoke(link)}
         />
       ))}
 
@@ -151,7 +154,7 @@ export default function ParentAccess() {
                 <Pill label={STATUS_LABEL.revoked} tone={STATUS_TONE.revoked} />
               </div>
               <p className="ps-hint">
-                Requested {prettyDate(link.created_at)}. You removed their access.
+                Connection created {prettyDate(link.created_at)}. Their access is removed.
               </p>
             </div>
           ))}
@@ -161,10 +164,9 @@ export default function ParentAccess() {
   );
 }
 
-function ParentRow({ link, draft, busy, onToggle, onApprove, onRevoke }) {
+function ParentRow({ link, draft, busy, onToggle, onShareLegacy, onRevoke }) {
   const pending = isPending(link);
   const revoked = isRevoked(link);
-  const granted = new Set(link.scopes || []);
 
   return (
     <div className="card pa-card" data-link-id={link.id}>
@@ -183,22 +185,24 @@ function ParentRow({ link, draft, busy, onToggle, onApprove, onRevoke }) {
 
       <p className="ps-hint">
         {pending
-          ? `Asked ${prettyDate(link.created_at)}. They can't see anything until you approve.`
+          ? "Legacy pending connection. This does not grant access or activate automatically."
           : revoked
-            ? `Requested ${prettyDate(link.created_at)}.`
-            : `Requested ${prettyDate(link.created_at)}.`}
+            ? "Access removed."
+            : isParentCreated(link)
+              ? "Connected when your parent created your account. Basic sharing is included; additional sections are your choice."
+              : `Connected since ${prettyDate(link.created_at)}.`}
       </p>
 
       <div className="pa-scopes">
         {SCOPES.map((s) => {
-          const on = s.locked || granted.has(s.id);
+          const on = s.locked || !!draft[s.id];
           return (
             <label className="pa-scope" key={s.id}>
               <span className="ps-toggle">
                 <input
                   type="checkbox"
                   checked={on}
-                  disabled={s.locked || revoked || busy}
+                  disabled={s.locked || revoked || busy || !link.can_manage || (pending && !link.can_approve)}
                   onChange={(e) => onToggle({ ...draft, [s.id]: e.target.checked })}
                 />
                 <span className="ps-track" />
@@ -216,12 +220,12 @@ function ParentRow({ link, draft, busy, onToggle, onApprove, onRevoke }) {
       </div>
 
       <div className="pa-actions">
-        {pending ? (
-          <button className="btn" disabled={busy} onClick={onApprove}>
-            {busy ? "Approving…" : "Approve & share"}
+        {pending && !isParentCreated(link) && link.can_approve ? (
+          <button className="btn" disabled={busy} onClick={onShareLegacy}>
+            {busy ? "Saving…" : "Share with this parent (legacy connection)"}
           </button>
         ) : null}
-        {!revoked ? (
+        {!revoked && link.can_manage ? (
           <button className="btn btn-ghost" disabled={busy} onClick={onRevoke}>
             {revoked ? "Removed" : busy ? "Working…" : "Remove access"}
           </button>

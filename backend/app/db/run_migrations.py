@@ -32,6 +32,13 @@ MIGRATIONS_DIR = BACKEND_DIR / "migrations"
 CRITICAL_COLUMNS = [
     ("users", "onboarding_step"),
     ("users", "onboarding_completed_at"),
+    ("users", "must_change_password"),
+    ("users", "token_version"),
+    ("users", "created_by_parent_id"),
+    ("users", "has_local_password"),
+    ("users", "first_login_at"),
+    ("parent_student_links", "activation_source"),
+    ("parent_student_links", "activated_at"),
 ]
 
 
