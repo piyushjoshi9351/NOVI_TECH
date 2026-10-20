@@ -11,7 +11,7 @@ import ParentsSocialProof from "@/components/parents/ParentsSocialProof";
 import ParentsCTAFooter from "@/components/parents/ParentsCTAFooter";
 
 export const metadata: Metadata = {
-  title: "For Parents — Parent Guidance & Mentorship with Novi",
+  title: "Career Planning for Your Child | Novi",
   description:
     "Stay informed about your child's journey without micromanaging. Novi gives parents clarity and students independence.",
 };

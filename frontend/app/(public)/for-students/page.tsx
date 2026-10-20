@@ -11,7 +11,7 @@ import StudentsSocialProof from "@/components/students/StudentsSocialProof";
 import StudentsCTAFooter from "@/components/students/StudentsCTAFooter";
 
 export const metadata: Metadata = {
-  title: "For Students — Discover Your Path with Novi",
+  title: "Career Exploration for Students in Grades 9–12 | Novi",
   description:
     "You don't need to have it all figured out. Novi helps you discover what you're good at, explore what's possible, and build a path toward your future.",
 };

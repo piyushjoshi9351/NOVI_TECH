@@ -29,19 +29,14 @@ export default function ParentsHero() {
 
             <Reveal delay={0.08}>
               <h1 className="font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
-                For parents,{" "}
-                <span className="text-gradient">clarity.</span>
-                <br />
-                For students,{" "}
-                <span className="text-gradient">independence.</span>
+                Their future is theirs to discover.{" "}
+                <span className="text-gradient">You can help them prepare for it.</span>
               </h1>
             </Reveal>
 
             <Reveal delay={0.16}>
               <p className="max-w-lg text-lg leading-relaxed text-muted">
-                Stay informed about your child&apos;s journey without
-                micromanaging. Novi gives you the visibility you need and
-                them the freedom they deserve.
+                As a parent, you want your child to have the best possible future. But with careers evolving and university choices becoming increasingly complex, knowing how to guide them isn&apos;t always easy. Novi helps make that journey more structured, personal and informed.
               </p>
             </Reveal>
 

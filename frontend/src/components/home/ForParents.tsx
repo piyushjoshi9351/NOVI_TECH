@@ -104,32 +104,25 @@ export default function ForParents() {
 
             <Reveal delay={0.08}>
               <h2 className="font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
-                For parents,{" "}
+                Be their guide,{" "}
                 <span className="animate-gradient bg-gradient-to-r from-cyan-400 to-teal-300 bg-clip-text text-transparent">
-                  absolute clarity.
-                </span>
-                <br />
-                For students,{" "}
-                <span className="animate-gradient bg-gradient-to-r from-indigo-400 via-primary to-accent-warm bg-clip-text text-transparent">
-                  total independence.
+                  not their decision-maker.
                 </span>
               </h2>
             </Reveal>
 
             <Reveal delay={0.16}>
               <p className="max-w-xl text-lg leading-relaxed text-muted">
-                Stay fully informed without micromanaging. Novi provides
-                real-time telemetry into your child&apos;s growth, university
-                alignment, and key milestones.
+                Your child doesn&apos;t need you to have every answer. They need you to help them ask the right questions. Novi helps you explore changing career opportunities together and support more informed decisions.
               </p>
             </Reveal>
 
             <Reveal delay={0.22}>
               <a
-                href="#"
+                href="/for-parents"
                 className="group btn-shine inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-primary px-6 py-3.5 text-sm font-semibold text-white shadow-xl transition-all hover:-translate-y-0.5 hover:from-indigo-500 hover:to-primary/90"
               >
-                Explore Parent Dashboard
+                Discover Novi for parents
                 <ArrowUpRight className="size-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
               </a>
             </Reveal>

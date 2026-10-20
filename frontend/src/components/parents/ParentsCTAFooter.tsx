@@ -86,23 +86,22 @@ export default function ParentsCTAFooter() {
                     <Sparkles className="size-3.5" /> Start your journey
                   </div>
                   <h2 className="font-display text-3xl font-bold leading-[1.1] text-foreground sm:text-4xl lg:text-5xl">
-                    Your child&apos;s future is too important
+                    A clearer path for them.
                     <br className="hidden sm:block" />
                     <span className="text-gradient">
-                      to figure out alone.
+                      Greater confidence for you.
                     </span>
                   </h2>
                   <p className="max-w-md text-sm leading-relaxed text-muted">
-                    Novi is the AI-powered Operating System for Student Success
-                    that guides you and your child from Grade 9 to their dream university.
+                    Novi helps your child explore, reflect and take ownership of their decisions—with you supporting the journey.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     <Magnetic strength={12}>
                       <Link
-                        href="/coming-soon"
+                        href="/signup"
                         className="btn-shine inline-flex items-center gap-2 rounded-full bg-primary px-7 py-3 text-sm font-semibold text-primary-foreground transition-all hover:-translate-y-0.5 hover:shadow-lg"
                       >
-                        Get Started with Novi
+                        Explore Novi for parents
                         <ArrowUpRight className="size-4" />
                       </Link>
                     </Magnetic>

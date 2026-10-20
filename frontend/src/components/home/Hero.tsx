@@ -63,17 +63,17 @@ export default function Hero() {
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-green-400 opacity-60" />
               <span className="relative inline-flex size-2 rounded-full bg-green-400" />
             </span>
-            AI-Powered Mentorship
+            Made in India for the world.
           </motion.span>
 
           <h1 className="font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl xl:text-7xl">
-            {["Your AI mentor.", "Your journey.", "Your future."].map((line, i) => (
+            {["Your future is bigger", "than one career choice."].map((line, i) => (
               <motion.span
                 key={line}
                 initial={{ opacity: 0, y: 30, filter: "blur(8px)" }}
                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                 transition={{ delay: 0.3 + i * 0.18, duration: 0.7, ease }}
-                className={`block ${i === 2 ? "text-gradient" : ""}`}
+                className={`block ${i === 1 ? "text-gradient" : ""}`}
               >
                 {line}
               </motion.span>
@@ -86,8 +86,7 @@ export default function Hero() {
             transition={{ delay: 0.75, duration: 0.6, ease }}
             className="max-w-xl text-base leading-relaxed text-muted sm:text-lg"
           >
-            Novi is the AI-powered Operating System for Student Success that
-            guides you from Grade 9 to your dream university—and beyond.
+            Discover what you&apos;re good at, explore careers you didn&apos;t know existed, and build a roadmap for the future that&apos;s right for you.
           </motion.p>
 
           <motion.div
@@ -98,10 +97,10 @@ export default function Hero() {
           >
             <Magnetic strength={12}>
               <Link
-                href="#how-it-works"
+                href="/signup"
                 className="btn-shine group inline-flex items-center justify-center gap-2 rounded-full bg-primary px-7 py-3.5 text-sm font-semibold text-primary-foreground transition-all hover:-translate-y-0.5 hover:shadow-lg"
               >
-                Meet Novi
+                Discover your future
                 <svg
                   viewBox="0 0 24 24"
                   className="size-4 transition-transform duration-300 group-hover:translate-x-1"
@@ -133,7 +132,7 @@ export default function Hero() {
                 >
                   <path d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z" />
                 </svg>
-                I&apos;m Parent
+                Explore Novi for parents
               </Link>
             </Magnetic>
           </motion.div>

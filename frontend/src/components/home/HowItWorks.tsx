@@ -6,7 +6,7 @@ const steps = [
   {
     grade: "09",
     label: "Grade 9",
-    title: "Discover Yourself",
+    title: "Discover",
     short: "Know yourself before choosing your path.",
     desc: "Novi helps you understand your interests, strengths, personality and the areas where you naturally enjoy learning.",
     items: ["Interest assessment", "Strength analysis", "Personality mapping", "Goal setting"],
@@ -18,7 +18,7 @@ const steps = [
   {
     grade: "10",
     label: "Grade 10",
-    title: "Explore Possibilities",
+    title: "Explore",
     short: "Turn curiosity into possibilities.",
     desc: "Explore careers, subjects, universities and real-world experiences based on what actually interests you.",
     items: ["Career exploration", "Subject selection", "University discovery", "Experience matching"],
@@ -30,7 +30,7 @@ const steps = [
   {
     grade: "11",
     label: "Grade 11",
-    title: "Build Your Profile",
+    title: "Build",
     short: "Start turning interests into proof.",
     desc: "Novi helps you transform your interests into projects, competitions, research, leadership and meaningful experiences.",
     items: ["Project planning", "Competition preparation", "Research opportunities", "Leadership roles"],
@@ -42,9 +42,9 @@ const steps = [
   {
     grade: "12",
     label: "Grade 12",
-    title: "Apply With Confidence",
+    title: "Decide",
     short: "Bring everything together.",
-    desc: "Build your university strategy, improve your applications and stay organized throughout the application journey.",
+    desc: "Organise your priorities, shortlist relevant options and prepare for the next stage with greater confidence.",
     items: ["University strategy", "Application building", "Essay refinement", "Deadline tracking"],
     icon: "◎",
     color: "from-orange-400 to-red-400",
@@ -94,10 +94,10 @@ export default function HowItWorks() {
             className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.05] tracking-tight mb-6"
           >
             <motion.span initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.4, duration: 0.6 }} className="block">
-              Four years.
+              Your future isn&apos;t a single decision.
             </motion.span>
             <motion.span initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.5, duration: 0.6 }} className="block">
-              One clear path.
+              It&apos;s a journey.
             </motion.span>
             <motion.span
               initial={{ opacity: 0, scale: 0.5, rotate: -5 }}
@@ -106,7 +106,7 @@ export default function HowItWorks() {
               transition={{ delay: 0.6, duration: 0.7, type: "spring", stiffness: 100 }}
               className="bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400 bg-clip-text text-transparent inline-block"
             >
-              Your future.
+              Grades 9–12.
             </motion.span>
           </motion.h2>
 
@@ -117,7 +117,7 @@ export default function HowItWorks() {
             transition={{ delay: 0.8, duration: 0.6 }}
             className="text-lg sm:text-xl text-foreground/50 leading-relaxed max-w-2xl"
           >
-            From Grade 9 to 12, Novi guides you through every step—from discovering who you are, to applying with absolute confidence.
+            From Grade 9 to 12, Novi helps you discover, explore, build and decide with greater confidence.
           </motion.p>
         </motion.div>
 

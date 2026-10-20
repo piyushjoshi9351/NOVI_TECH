@@ -74,24 +74,24 @@ export default function AboutUs() {
               <div className="relative z-10 order-1 lg:order-2">
                 <Reveal>
                   <h2 className="font-display text-4xl font-bold leading-[1.1] tracking-tight sm:text-5xl lg:text-6xl">
-                    Your future is too important{" "}
+                    The future doesn&apos;t come with a map.{" "}
                     <br className="hidden sm:block" />
-                    to figure out alone.
+                    Let&apos;s build yours.
                   </h2>
                 </Reveal>
                 <Reveal delay={0.1}>
                   <h3 className="text-gradient mb-8 mt-4 font-display text-3xl font-bold sm:text-4xl lg:text-5xl">
-                    Meet Novi today.
+                    Start discovering what makes you unique, where your interests could take you and what you can do next.
                   </h3>
                 </Reveal>
                 <Reveal delay={0.2}>
                   <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
                     <Magnetic strength={14}>
                       <a
-                        href="#"
+                        href="/signup"
                         className="btn-shine group inline-flex items-center justify-center gap-2 rounded-full bg-primary px-8 py-3.5 text-sm font-semibold text-primary-foreground transition-all hover:-translate-y-0.5 hover:shadow-lg lg:w-auto"
                       >
-                        Start your journey
+                        Start your Novi journey
                         <motion.span
                           animate={{ x: [0, 4, 0] }}
                           transition={{

@@ -37,18 +37,16 @@ export default function StudentsHero() {
 
             <Reveal delay={0.08}>
               <h1 className="font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
-                You don&apos;t need to have it all{" "}
+                Your future. Your choices.{" "}
                 <span className="animate-gradient bg-gradient-to-r from-primary via-violet-400 to-indigo-400 bg-clip-text text-transparent">
-                  figured out.
+                  Your journey.
                 </span>
               </h1>
             </Reveal>
 
             <Reveal delay={0.16}>
               <p className="max-w-lg text-lg leading-relaxed text-muted">
-                Novi helps you discover what you&apos;re good at, explore what&apos;s
-                possible, and build a path toward your future — all at your own
-                pace.
+                You don&apos;t have to know what you want to become yet. Novi helps you discover what you&apos;re good at, explore what&apos;s possible, and build a path toward your future — all at your own pace.
               </p>
             </Reveal>
 
