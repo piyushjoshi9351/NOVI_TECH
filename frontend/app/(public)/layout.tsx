@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import ThemeProvider from "@/components/ui/ThemeProvider";
-import "@/site/site.css";
 
 export const metadata: Metadata = {
   title: "Novi – Career Guidance and Future Planning for Students",

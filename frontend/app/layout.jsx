@@ -1,4 +1,5 @@
 import { AuthProvider } from "../src/auth";
+import "../src/site/site.css";
 
 export const viewport = {
   themeColor: "#060a13",
