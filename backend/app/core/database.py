@@ -28,6 +28,7 @@ engine = create_engine(
     pool_recycle=300,
     pool_timeout=30,
     connect_args={
+        "ssl": {"ssl": True},
         "connect_timeout": 10,
         "read_timeout": 30,
         "write_timeout": 30,
