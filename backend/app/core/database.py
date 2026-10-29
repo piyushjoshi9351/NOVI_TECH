@@ -23,9 +23,15 @@ class SchemaMigration(Base):
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
-    pool_recycle=1800,
+    pool_size=2,
+    max_overflow=3,
+    pool_recycle=300,
+    pool_timeout=30,
+    connect_args={
+        "connect_timeout": 10,
+        "read_timeout": 30,
+        "write_timeout": 30,
+    },
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
