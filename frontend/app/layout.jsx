@@ -19,6 +19,19 @@ export default function RootLayout({ children }) {
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         <script
+          async
+          src="https://www.googletagmanager.com/gtag/js?id=G-3ZT3CRNZW6"
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+
+gtag('config', 'G-3ZT3CRNZW6');`,
+          }}
+        />
+        <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var p=JSON.parse(localStorage.getItem("novi_prefs")||"{}")||{};var t=p.theme;if(t!=="light"&&t!=="dark"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches)?"light":"dark";}document.documentElement.setAttribute("data-theme",t);var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",t==="light"?"#f3f5fb":"#060a13");}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();`,
           }}
