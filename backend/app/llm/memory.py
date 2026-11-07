@@ -303,6 +303,7 @@ class NoviMemory:
             name = getattr(user, "full_name", "") or f"User {getattr(user, 'id', '')}"
             grade = getattr(user, "grade", None)
             school = getattr(user, "school", None)
+            attempted = self.is_reachable()
             new_agent = self.ensure_agent(
                 user_id=getattr(user, "id", 0),
                 name=name,
@@ -310,24 +311,31 @@ class NoviMemory:
                 existing=None,
                 school=school,
             )
-            if not new_agent:
+            if not attempted:
                 return False
-            agent = new_agent
-            # *** Persist the new agent ID so future calls reuse the same agent ***
+            # Persist the outcome so the admin view can distinguish a failed
+            # creation from one that was never attempted.
             from app.core.database import get_db
             from sqlalchemy import update as sq_update
             from app.models.user import User as UserModel
             try:
                 db_gen = get_db()
                 db = next(db_gen)
+                values = {"ai_agent_attempts": UserModel.ai_agent_attempts + 1}
+                if new_agent:
+                    values.update(letta_agent_id=new_agent, ai_agent_status="active")
+                else:
+                    values["ai_agent_status"] = "failed"
                 db.execute(
                     sq_update(UserModel).where(UserModel.id == getattr(user, "id", 0))
-                    .values(letta_agent_id=agent)
+                    .values(**values)
                 )
                 db.commit()
-                db.commit()
             except Exception as exc:
-                print(f"[memory] failed to save letta_agent_id to DB: {exc}")
+                print(f"[memory] failed to save agent status to DB: {exc}")
+            if not new_agent:
+                return False
+            agent = new_agent
         if not self.is_reachable() or not fact or not fact.strip():
             return False
         full_tags = list(tags) + [sy_tag(), grade_tag(getattr(user, "grade", None))]

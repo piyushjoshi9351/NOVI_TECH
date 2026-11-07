@@ -4,6 +4,7 @@ import { ADD_CHILD, FIRST_LOGIN, destinationFor, googleDestination, passwordErro
 
 const parent = { role: "parent", needs_child_setup: false };
 const student = { role: "student", onboarding_completed: true, must_change_password: false };
+const admin = { role: "admin" };
 const route = (user, pathname, extra = {}) => redirectFor({ token: "test-token", user, pathname, ...extra });
 
 test("new passwords enforce character count and UTF-8 bytes", () => {
@@ -72,6 +73,27 @@ test("completed accounts use role home when entering the other area", () => {
   assert.equal(route(student, "/parent", { requiredRole: "parent" }), "/dashboard");
   assert.equal(route(parent, "/chat", { requiredRole: "student" }), "/parent");
   assert.equal(route(parent, "/parent/settings"), "");
+});
+
+test("admins get the admin console and cannot enter student or parent areas", () => {
+  assert.equal(destinationFor(admin), "/admin");
+  assert.equal(safeNext("/admin", "admin"), "/admin");
+  assert.equal(safeNext("/admin/students/7", "admin"), "/admin/students/7");
+  assert.equal(safeNext("/admin?tab=mentors", "admin"), "/admin?tab=mentors");
+  assert.equal(safeNext("/admin", "student"), "");
+  assert.equal(safeNext("/admin/students", "parent"), "");
+  assert.equal(safeNext("/parent/12", "admin"), "");
+  assert.equal(safeNext("/dashboard", "admin"), "");
+  assert.equal(route(admin, "/admin/students", { requiredRole: "admin" }), "");
+  assert.equal(route(admin, "/dashboard", { requiredRole: "student" }), "/admin");
+  assert.equal(route(admin, "/parent", { requiredRole: "parent" }), "/admin");
+  assert.equal(route(student, "/admin", { requiredRole: "admin" }), "/dashboard");
+  assert.equal(route(parent, "/admin", { requiredRole: "admin" }), "/parent");
+  assert.equal(route(admin, "/admin", { search: "next=%2Fadmin%2Fparents" }), "");
+});
+
+test("unauthenticated admins return to the requested admin page after login", () => {
+  assert.equal(redirectFor({ token: null, user: null, pathname: "/admin/parents" }), "/login?next=%2Fadmin%2Fparents");
 });
 
 test("logging back in during setup preserves the original safe destination", () => {

@@ -70,7 +70,10 @@ def login(data: LoginRequest, db: Session) -> User:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
 
-    if data.expected_role and user.role != data.expected_role:
+    # Admin accounts use the same login form, which always sends the currently
+    # selected parent/student tab as `expected_role`. That guard exists to keep
+    # parents and students in their own app; it must not lock an admin out.
+    if data.expected_role and user.role != UserRole.ADMIN and user.role != data.expected_role:
         # Credentials were valid; the caller is simply in the wrong app.
         raise HTTPException(
             status_code=403,
