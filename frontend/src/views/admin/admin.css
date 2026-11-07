@@ -1,0 +1,85 @@
+/* Minimal admin area. Uses the design tokens from static/styles.css. */
+
+.admin-page { display: flex; flex-direction: column; gap: 22px; }
+.admin-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.admin-title { margin: 0; font-size: 26px; line-height: 1.15; }
+.admin-sub { margin: 6px 0 0; color: var(--muted); font-size: 13.5px; max-width: 720px; }
+.admin-muted { color: var(--muted); }
+.admin-error { color: var(--bad); font-size: 13.5px; }
+
+.admin-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.admin-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 18px;
+}
+.admin-card .num { font-size: 30px; font-weight: 800; line-height: 1; }
+.admin-card .label { margin-top: 8px; color: var(--muted); font-size: 13px; }
+
+.admin-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.admin-input {
+  min-width: 240px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 14px;
+}
+.admin-btn {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.admin-btn:hover { border-color: var(--border-strong); }
+.admin-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.admin-btn.primary { background: var(--grad); color: var(--on-brand); border-color: transparent; }
+.admin-btn.danger { color: var(--bad); border-color: rgba(248, 113, 113, 0.35); }
+.admin-btn.link { background: transparent; border-color: transparent; color: var(--accent-2); padding-left: 0; padding-right: 0; }
+
+.admin-table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.admin-table th, .admin-table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+.admin-table th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--wash); }
+.admin-table tbody tr:last-child td { border-bottom: 0; }
+.admin-table a { color: var(--accent-2); text-decoration: none; }
+.admin-table a:hover { text-decoration: underline; }
+
+.admin-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.badge-active { color: var(--good); border-color: rgba(52, 211, 153, 0.35); background: rgba(52, 211, 153, 0.08); }
+.badge-failed { color: var(--bad); border-color: rgba(248, 113, 113, 0.35); background: rgba(248, 113, 113, 0.08); }
+.badge-not_created { color: var(--muted); }
+.badge-pending { color: var(--warn); border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.08); }
+.badge-revoked { color: var(--bad); }
+
+.admin-pager { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.admin-pager span { color: var(--muted); font-size: 13px; }
+
+.admin-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.admin-detail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 16px;
+}
+.admin-detail .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.admin-detail .v { margin-top: 6px; font-size: 15px; font-weight: 600; }
+
+@media (max-width: 720px) {
+  .admin-input { min-width: 100%; }
+  .admin-head { flex-direction: column; }
+}

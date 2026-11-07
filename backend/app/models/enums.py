@@ -4,6 +4,7 @@ import enum
 class UserRole(str, enum.Enum):
     STUDENT = "student"
     PARENT = "parent"
+    ADMIN = "admin"
 
 
 class LinkStatus(str, enum.Enum):

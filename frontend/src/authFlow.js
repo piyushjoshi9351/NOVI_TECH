@@ -1,5 +1,5 @@
 /** Shared password policy and ordered authentication destinations. */
-export const ROLE_HOME = { parent: "/parent", student: "/dashboard" };
+export const ROLE_HOME = { parent: "/parent", student: "/dashboard", admin: "/admin" };
 export const ADD_CHILD = "/parent/add-child";
 export const FIRST_LOGIN = "/first-login";
 
@@ -36,7 +36,8 @@ export function safeNext(value, role) {
     const parentPath = /^\/parent(?:\/(?:\d+|add-child|settings))?\/?$/.test(path) || path === "/advisor" || path === "/overview";
     const studentPath = /^\/(?:dashboard|chat|dna|careers|universities|roadmap|passport|checkin|profile|onboarding|first-login)\/?$/.test(path)
       || /^\/(?:career|university)\/[^/]+\/?$/.test(path);
-    if (!(role === "parent" ? parentPath : role === "student" ? studentPath : parentPath || studentPath)) return "";
+    const adminPath = /^\/admin(?:\/.*)?\/?$/.test(path);
+    if (!(role === "parent" ? parentPath : role === "student" ? studentPath : role === "admin" ? adminPath : parentPath || studentPath || adminPath)) return "";
     return url.pathname + url.search + url.hash;
   } catch (_) {
     return "";

@@ -72,6 +72,14 @@ def get_current_parent(
     return user
 
 
+def get_current_admin(
+    user: User = Depends(_get_current_user),
+) -> User:
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
 # --------------------------------------------------------------------------- parents
 # Authorization for every /parent/students/{student_id}/* endpoint.
 #

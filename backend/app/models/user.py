@@ -100,6 +100,10 @@ class User(Base):
     links: Mapped[list | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, server_default="1")
     letta_agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Admin visibility into AI mentor provisioning. `letta_agent_id` alone
+    # cannot distinguish "never attempted" from "creation failed".
+    ai_agent_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ai_agent_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     onboarding_step: Mapped[str] = mapped_column(String(50), nullable=False, default="name", server_default="name")
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

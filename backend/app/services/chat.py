@@ -13,17 +13,24 @@ from app.services.career_dna import get_dna
 from app.services.providers import gemini, memory
 
 
-def _lazy_ensure_agent(user: User, db: Session) -> str | None:
+def _lazy_ensure_agent(user: User, db: Session, record_attempt: bool = True) -> str | None:
     """Provision a Letta agent for a student on first use if it hasn't been created."""
     if user.letta_agent_id:
         try:
             if memory.letta.agent_exists(user.letta_agent_id):
+                # Legacy rows may predate ai_agent_status; a live agent id is
+                # authoritative and keeps the admin view in sync.
+                if user.ai_agent_status != "active":
+                    user.ai_agent_status = "active"
+                    db.commit()
                 return user.letta_agent_id
         except Exception:
             return user.letta_agent_id
         # Recreate only when Letta explicitly confirms the saved agent is gone.
     if user.role != UserRole.STUDENT or not memory.is_reachable():
         return None
+    if record_attempt:
+        user.ai_agent_attempts = (user.ai_agent_attempts or 0) + 1
     agent_id = memory.ensure_agent(
         user_id=user.id,
         name=user.display_name,
@@ -33,7 +40,10 @@ def _lazy_ensure_agent(user: User, db: Session) -> str | None:
     )
     if agent_id:
         user.letta_agent_id = agent_id
-        db.commit()
+        user.ai_agent_status = "active"
+    else:
+        user.ai_agent_status = "failed"
+    db.commit()
     return agent_id
 
 

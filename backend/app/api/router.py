@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    admin,
     auth,
     career_dna,
     careers,
@@ -19,6 +20,7 @@ from app.api import (
 from app.m3.api.routes import router as m3_router
 
 api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(admin.router)
 api_router.include_router(auth.router)
 api_router.include_router(google_auth.router)
 api_router.include_router(chat.router)
