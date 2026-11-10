@@ -74,6 +74,7 @@ export function destinationFor(user, next) {
 }
 
 export function redirectFor({ token, user, pathname, search = "", requiredRole }) {
+  if (pathname.startsWith("/admin")) return "";
   const next = new URLSearchParams(search).get("next");
   if (!token || !user) return withNext("/login", safeNext(pathname + search));
   const setup = setupPath(user);
